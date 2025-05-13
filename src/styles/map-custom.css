@@ -1,0 +1,236 @@
+/* Custom styles for map components */
+
+/* Popup styling */
+.mapboxgl-popup {
+  max-width: 320px !important;
+  font-family: system-ui, -apple-system, sans-serif;
+  z-index: 2;
+}
+
+.mapboxgl-popup-content {
+  padding: 12px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Custom popup styles */
+.custom-popup {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.complaint-popup {
+  font-family: inherit;
+  padding: 2px;
+  max-width: 250px;
+}
+
+.popup-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #1e293b;
+}
+
+.popup-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.popup-category {
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+}
+
+.popup-icon {
+  margin-right: 4px;
+}
+
+.popup-status {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 16px;
+  font-weight: 500;
+}
+
+.popup-status.status-open {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.popup-status.status-in_progress {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.popup-status.status-resolved {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.popup-date {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.popup-footer {
+  font-size: 11px;
+  font-style: italic;
+  color: #94a3b8;
+  text-align: center;
+  margin-top: 6px;
+}
+
+/* Better visibility for markers on satellite view */
+.mapboxgl-marker {
+  filter: drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.5));
+  z-index: 1;
+}
+
+/* Style markers differently per status */
+.marker-open {
+  background-color: #e74c3c;
+}
+
+.marker-in_progress {
+  background-color: #f39c12;
+}
+
+.marker-resolved {
+  background-color: #2ecc71;
+}
+
+/* Analysis panel styling */
+.analysis-panel {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  padding: 12px;
+  margin: 8px;
+  max-width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.analysis-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.analysis-panel-title {
+  font-weight: 600;
+  font-size: 16px;
+  color: #1e293b;
+}
+
+.analysis-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.analysis-content {
+  font-size: 0.875rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.analysis-result-section {
+  margin-bottom: 12px;
+}
+
+.analysis-result-label {
+  font-weight: 500;
+  font-size: 14px;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.analysis-result-value {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.analysis-result-list {
+  margin-top: 4px;
+  margin-left: 8px;
+}
+
+.analysis-result-list-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.stats-container {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  flex-basis: calc(50% - 8px);
+  margin-bottom: 8px;
+  background: #f8fafc;
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #64748b;
+  display: block;
+}
+
+.stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+/* Draw tools styling - for better visibility on satellite */
+.mapbox-gl-draw_ctrl-draw-btn {
+  background-color: white !important;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1) !important;
+}
+
+.mapbox-gl-draw_polygon {
+  background-color: rgba(66, 100, 251, 0.1);
+  border: 2px solid #4264fb;
+  background-image: url('data:image/svg+xml;utf8,<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 3h18v18H3z" fill="none" stroke="black" stroke-width="2"/></svg>') !important;
+}
+
+/* Fix for satellite layer to ensure markers and UI are visible */
+.mapboxgl-canvas-container.mapboxgl-interactive {
+  position: relative;
+  z-index: 0;
+}
+
+/* Custom attribution position */
+.mapboxgl-ctrl-bottom-right {
+  bottom: 8px;
+  right: 8px;
+}
+
+/* Custom attribution styling */
+.mapboxgl-ctrl-attrib {
+  font-size: 10px;
+  padding: 2px 4px !important;
+  background-color: rgba(255, 255, 255, 0.7) !important;
+  border-radius: 4px !important;
+}
+
+/* Basic map container styles */
+.mapboxgl-map {
+  font-family: inherit;
+}

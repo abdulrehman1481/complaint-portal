@@ -3,12 +3,29 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@fortawesome/fontawesome-free": "^6.7.2",
+    "@mapbox/mapbox-gl-draw": "^1.5.0",
+    "@supabase/supabase-js": "^2.49.4",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "@turf/buffer": "^6.5.0",
+    "@turf/turf": "^6.5.0",
+    "axios": "^1.6.2",
+    "date-fns": "^2.30.0",
+    "jquery": "^3.7.1",
+    "leaflet": "^1.9.4",
+    "leaflet-heatmap": "^1.0.0",
+    "leaflet-routing-machine": "^3.2.12",
+    "leaflet.heat": "^0.2.0",
+    "lucide-react": "^0.507.0",
+    "mapbox-gl": "^2.15.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-leaflet": "^4.2.1",
+    "react-leaflet-heatmap-layer-v3": "^3.0.3-beta-1",
+    "react-router-dom": "^6.30.0",
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
   },
@@ -35,5 +52,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.3.6"
   }
 }
