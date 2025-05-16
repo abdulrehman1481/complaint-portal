@@ -85,7 +85,14 @@ const ComplaintDetail = () => {
     if (complaint && mapContainer.current && !map.current) {
       initializeMap();
     }
-  }, [complaint]);
+    // Re-initialize map if complaint or container changes
+    return () => {
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+    };
+  }, [complaint, mapContainer.current]);
 
   const initializeMap = () => {
     if (!complaint) return;
@@ -324,7 +331,8 @@ const ComplaintDetail = () => {
       setStatusUpdating(true);
       
       const updates = { 
-        status: newStatus
+        status: newStatus,
+        updated_at: new Date().toISOString()
       };
       
       if (newStatus === 'resolved') {
@@ -333,18 +341,39 @@ const ComplaintDetail = () => {
         updates.resolved_at = null;
       }
       
+      // Update the complaint status in the complaints table
       const { error } = await supabase
         .from('complaints')
         .update(updates)
-        .eq('id', id);
+        .eq('id', parseInt(complaint.id));
       
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase update error details:', error);
+        throw error;
+      }
+      
+      // Record status change in complaint_history table
+      const { error: historyError } = await supabase
+        .from('complaint_history')
+        .insert({
+          complaint_id: parseInt(complaint.id),
+          status: newStatus,
+          changed_by: user.id,
+          notes: `Status changed to ${getStatusText(newStatus)}`,
+          created_at: new Date().toISOString()
+        });
+      
+      if (historyError) {
+        console.error('Error recording history:', historyError);
+        // Continue even if history recording fails
+      }
       
       setComplaint(prev => {
         const updated = {
           ...prev,
           status: newStatus,
-          ...updates
+          updated_at: updates.updated_at,
+          resolved_at: updates.resolved_at
         };
         
         if (newStatus === 'resolved' && updated.created_at) {
@@ -363,7 +392,7 @@ const ComplaintDetail = () => {
       
     } catch (error) {
       console.error('Error updating status:', error);
-      alert('Failed to update status. Please try again.');
+      alert(`Failed to update status: ${error.message || 'Please try again.'}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -373,20 +402,39 @@ const ComplaintDetail = () => {
     try {
       setStatusUpdating(true);
       
-      const updates = { 
-        assigned_to: user.id
-      };
+      // Update original status if needed
+      const previousStatus = complaint.status;
+      const newStatus = complaint.status === 'open' ? 'in_progress' : complaint.status;
       
-      if (complaint.status === 'open') {
-        updates.status = 'in_progress';
-      }
+      const updates = { 
+        assigned_to: user.id,
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
       
       const { error } = await supabase
         .from('complaints')
         .update(updates)
-        .eq('id', id);
+        .eq('id', parseInt(complaint.id));
       
       if (error) throw error;
+      
+      // If status changed, record in history
+      if (previousStatus !== newStatus) {
+        const { error: historyError } = await supabase
+          .from('complaint_history')
+          .insert({
+            complaint_id: parseInt(complaint.id),
+            status: newStatus,
+            changed_by: user.id,
+            notes: `Status changed to ${getStatusText(newStatus)} when assigned`,
+            created_at: new Date().toISOString()
+          });
+        
+        if (historyError) {
+          console.error('Error recording status history:', historyError);
+        }
+      }
       
       await addSystemComment(`Complaint assigned to ${user.first_name} ${user.last_name}`);
       
@@ -394,12 +442,12 @@ const ComplaintDetail = () => {
         ...prev,
         assigned_to: user.id,
         assigned_to_user: user,
-        status: prev.status === 'open' ? 'in_progress' : prev.status
+        status: newStatus
       }));
       
     } catch (error) {
       console.error('Error assigning complaint:', error);
-      alert('Failed to assign complaint. Please try again.');
+      alert(`Failed to assign complaint: ${error.message || 'Please try again.'}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -407,38 +455,56 @@ const ComplaintDetail = () => {
 
   const handleAssignToDepartment = async (departmentId) => {
     try {
+      if (!departmentId) return;
+      
       setStatusUpdating(true);
       
       const updates = { 
-        department_id: departmentId
+        department_id: parseInt(departmentId),
+        updated_at: new Date().toISOString()
       };
       
       const { error } = await supabase
         .from('complaints')
         .update(updates)
-        .eq('id', id);
+        .eq('id', parseInt(complaint.id));
       
       if (error) throw error;
       
-      // Fetch department name for the comment
       const { data: dept } = await supabase
         .from('departments')
         .select('name')
-        .eq('id', departmentId)
+        .eq('id', parseInt(departmentId))
         .single();
       
       const departmentName = dept?.name || `Department #${departmentId}`;
+      
+      // Record assignment in complaint_history for tracking
+      const { error: historyError } = await supabase
+        .from('complaint_history')
+        .insert({
+          complaint_id: parseInt(complaint.id),
+          status: complaint.status, // Status remains the same
+          changed_by: user.id,
+          notes: `Assigned to ${departmentName} department`,
+          created_at: new Date().toISOString()
+        });
+      
+      if (historyError) {
+        console.error('Error recording department assignment history:', historyError);
+      }
+      
       await addSystemComment(`Complaint assigned to ${departmentName} department`);
       
       setComplaint(prev => ({
         ...prev,
-        department_id: departmentId,
-        departments: { ...prev.departments, id: departmentId, name: departmentName }
+        department_id: parseInt(departmentId),
+        departments: { ...prev.departments, id: parseInt(departmentId), name: departmentName }
       }));
       
     } catch (error) {
       console.error('Error assigning complaint to department:', error);
-      alert('Failed to assign complaint to department. Please try again.');
+      alert(`Failed to assign complaint to department: ${error.message || 'Please try again.'}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -843,25 +909,17 @@ const ComplaintDetail = () => {
                               Currently handling this complaint
                             </p>
                           </div>
-                          <div>
-                            <button
-                              onClick={() => document.getElementById('department-select').focus()}
-                              className="text-xs text-blue-600 hover:text-blue-800"
-                            >
-                              Change
-                            </button>
-                          </div>
                         </div>
                       ) : (
                         <p className="text-sm text-gray-500 mb-2">No department assigned yet</p>
                       )}
                       
-                      <div className="mt-2">
+                      <div className="mt-3">
                         <select
                           id="department-select"
                           disabled={statusUpdating}
                           value={complaint.department_id || ""}
-                          onChange={(e) => handleAssignToDepartment(e.target.value)}
+                          onChange={(e) => e.target.value !== "" && handleAssignToDepartment(e.target.value)}
                           className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                         >
                           <option value="">Select a department</option>
@@ -871,6 +929,20 @@ const ComplaintDetail = () => {
                             </option>
                           ))}
                         </select>
+                        <button
+                          onClick={() => handleAssignToDepartment(document.getElementById('department-select').value)}
+                          disabled={statusUpdating || !document.getElementById('department-select')?.value}
+                          className="mt-2 w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+                        >
+                          {statusUpdating ? (
+                            <>
+                              <Loader className="h-4 w-4 mr-2 animate-spin" />
+                              Assigning...
+                            </>
+                          ) : (
+                            'Assign to Department'
+                          )}
+                        </button>
                       </div>
                     </div>
                     
