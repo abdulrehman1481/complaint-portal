@@ -82,76 +82,240 @@ const ComplaintDetail = () => {
   }, [id, navigate]);
 
   useEffect(() => {
-    if (complaint && complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude) {
-      if (map.current) return;
+    if (complaint && mapContainer.current && !map.current) {
+      initializeMap();
+    }
+  }, [complaint]);
+
+  const initializeMap = () => {
+    if (!complaint) return;
+    
+    let lat = null, lng = null;
+    
+    if (complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude) {
+      lat = complaint.parsedLocation.latitude;
+      lng = complaint.parsedLocation.longitude;
+    } else if (complaint.location) {
+      if (typeof complaint.location === 'string') {
+        const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
+        if (pointMatch && pointMatch.length >= 3) {
+          lng = parseFloat(pointMatch[1]);
+          lat = parseFloat(pointMatch[2]);
+        }
+      } else if (typeof complaint.location === 'object') {
+        if (complaint.location.latitude !== undefined && complaint.location.longitude !== undefined) {
+          lat = complaint.location.latitude;
+          lng = complaint.location.longitude;
+        } else if (complaint.location.lat !== undefined && complaint.location.lng !== undefined) {
+          lat = complaint.location.lat;
+          lng = complaint.location.lng;
+        } else if (complaint.location.coordinates && Array.isArray(complaint.location.coordinates)) {
+          [lng, lat] = complaint.location.coordinates;
+        }
+      }
+    } else if (complaint.coordinates && Array.isArray(complaint.coordinates)) {
+      [lng, lat] = complaint.coordinates;
+    }
+    
+    if (!lat || !lng || isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      console.warn('Invalid coordinates:', lat, lng);
+      return;
+    }
+    
+    try {
+      mapboxgl.accessToken = MAPBOX_TOKEN;
       
       map.current = new mapboxgl.Map({
         container: mapContainer.current,
         style: 'mapbox://styles/mapbox/streets-v11',
-        center: [complaint.parsedLocation.longitude, complaint.parsedLocation.latitude],
+        center: [lng, lat],
         zoom: 15,
-        accessToken: MAPBOX_TOKEN
+        interactive: true
       });
       
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
       
       new mapboxgl.Marker({ color: '#e74c3c' })
-        .setLngLat([complaint.parsedLocation.longitude, complaint.parsedLocation.latitude])
+        .setLngLat([lng, lat])
         .addTo(map.current);
       
-      return () => {
-        if (map.current) map.current.remove();
-      };
+      if (!complaint.locationName) {
+        fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}`)
+          .then(response => response.json())
+          .then(data => {
+            if (data && data.features && data.features.length > 0) {
+              const locationName = data.features[0].place_name;
+              setComplaint(prev => ({
+                ...prev,
+                locationName
+              }));
+            }
+          })
+          .catch(err => console.error('Error getting location name:', err));
+      }
+    } catch (error) {
+      console.error('Error initializing map:', error);
     }
-  }, [complaint]);
+  };
 
   const fetchComplaintDetails = async (id) => {
     try {
-      const { data, error } = await supabase
+      // First fetch the complaint with just the categories to avoid the join error
+      const { data: comp, error: compErr } = await supabase
         .from('complaints')
-        .select(`
-          *,
-          categories (id, name, icon),
-          users:reported_by (id, first_name, last_name, email, avatar_url),
-          assigned_users:assigned_to (id, first_name, last_name, email, avatar_url),
-          departments (id, name)
-        `)
+        .select('*, categories(*)')
         .eq('id', id)
         .single();
+        
+      if (compErr) throw compErr;
 
-      if (error) throw error;
+      // Fetch department details separately if department_id exists
+      let departmentData = null;
+      if (comp.department_id) {
+        const { data: dept } = await supabase
+          .from('departments')
+          .select('*')
+          .eq('id', comp.department_id)
+          .single();
+        departmentData = dept;
+      }
 
-      // Parse location data using the improved parser
-      const locationData = parseLocation(data.location);
+      // Continue with existing user fetching code
+      let reported = null;
+      if (comp.reported_by && !comp.anonymous) {
+        const { data: ru } = await supabase
+          .from('users')
+          .select('id,first_name,last_name')
+          .eq('id', comp.reported_by)
+          .single();
+        reported = ru;
+      }
       
-      setComplaint({
-        ...data,
-        parsedLocation: locationData
-      });
+      let assigned = null;
+      if (comp.assigned_to) {
+        const { data: au } = await supabase
+          .from('users')
+          .select('id,first_name,last_name,roles(name)')  // Remove avatar_url since it doesn't exist
+          .eq('id', comp.assigned_to)
+          .single();
+        assigned = au;
+      }
+      
+      // Fetch available departments for assignment
+      const { data: departments } = await supabase
+        .from('departments')
+        .select('id,name')
+        .order('name');
 
-      // Map will be initialized in the useEffect that depends on complaint state
+      const imageUrls = (comp.images || []).map(path =>
+        supabase.storage.from('complaint-images').getPublicUrl(path).data.publicUrl
+      );
+      
+      const locationData = parseComplaintLocation(comp);
 
-    } catch (error) {
-      console.error('Error parsing location data:', error);
-      setError('Error loading complaint details');
+      const enhancedComplaint = {
+        ...comp,
+        reported_by_user: reported,
+        assigned_to_user: assigned,
+        departments: departmentData, // Use the separately fetched department data
+        parsedLocation: locationData,
+        imageUrls,
+        resolutionTime: comp.resolved_at && comp.created_at ? 
+          calculateResolutionTime(new Date(comp.created_at), new Date(comp.resolved_at)) : null,
+        availableDepartments: departments || []
+      };
+      
+      setComplaint(enhancedComplaint);
+      
+    } catch (err) {
+      console.error('Fetch complaint error:', err);
+      setError('Error loading complaint details. Please try again later.');
     }
+  };
+
+  const parseComplaintLocation = (comp) => {
+    if (typeof parseLocation === 'function') {
+      const parsedLoc = parseLocation(comp.location);
+      if (parsedLoc && parsedLoc.latitude && parsedLoc.longitude) {
+        return parsedLoc;
+      }
+    }
+    
+    if (comp.location) {
+      if (typeof comp.location === 'object' && comp.location.type === 'Point' && 
+          Array.isArray(comp.location.coordinates) && comp.location.coordinates.length === 2) {
+        const [longitude, latitude] = comp.location.coordinates;
+        return { latitude, longitude };
+      }
+      
+      if (typeof comp.location === 'object' && 
+          (comp.location.latitude !== undefined && comp.location.longitude !== undefined)) {
+        return {
+          latitude: comp.location.latitude,
+          longitude: comp.location.longitude
+        };
+      }
+      
+      if (typeof comp.location === 'object' && 
+          (comp.location.lat !== undefined && comp.location.lng !== undefined)) {
+        return {
+          latitude: comp.location.lat,
+          longitude: comp.location.lng
+        };
+      }
+      
+      if (typeof comp.location === 'string') {
+        const pointMatch = comp.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
+        if (pointMatch && pointMatch.length >= 3) {
+          return {
+            longitude: parseFloat(pointMatch[1]),
+            latitude: parseFloat(pointMatch[2])
+          };
+        }
+      }
+    }
+    
+    if (comp.latitude !== undefined && comp.longitude !== undefined) {
+      return {
+        latitude: comp.latitude,
+        longitude: comp.longitude
+      };
+    }
+    
+    if (comp.coordinates && Array.isArray(comp.coordinates) && comp.coordinates.length === 2) {
+      return {
+        longitude: comp.coordinates[0],
+        latitude: comp.coordinates[1]
+      };
+    }
+    
+    return null;
+  };
+
+  const calculateResolutionTime = (createdDate, resolvedDate) => {
+    const diffMs = resolvedDate - createdDate;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    
+    if (diffDays > 0) {
+      return `${diffDays} day${diffDays !== 1 ? 's' : ''} and ${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
+    }
+    return `${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
   };
 
   const fetchComments = async () => {
     try {
       const { data, error } = await supabase
         .from('complaint_comments')
-        .select(`
-          *,
-          users (*)
-        `)
+        .select('*, user:user_id(id,first_name,last_name)')  // Remove avatar_url since it doesn't exist
         .eq('complaint_id', id)
         .order('created_at', { ascending: true });
-      
+        
       if (error) throw error;
       setComments(data || []);
-    } catch (error) {
-      console.error('Error fetching comments:', error);
+    } catch (err) {
+      console.error('Fetch comments error:', err);
+      setError('Failed to load comments. Please refresh and try again.');
     }
   };
 
@@ -159,23 +323,43 @@ const ComplaintDetail = () => {
     try {
       setStatusUpdating(true);
       
+      const updates = { 
+        status: newStatus
+      };
+      
+      if (newStatus === 'resolved') {
+        updates.resolved_at = new Date().toISOString();
+      } else if (newStatus === 'open' && complaint.resolved_at) {
+        updates.resolved_at = null;
+      }
+      
       const { error } = await supabase
         .from('complaints')
-        .update({ 
-          status: newStatus,
-          ...(newStatus === 'resolved' ? { resolved_at: new Date().toISOString() } : {})
-        })
+        .update(updates)
         .eq('id', id);
       
       if (error) throw error;
       
-      setComplaint(prev => ({
-        ...prev,
-        status: newStatus,
-        ...(newStatus === 'resolved' ? { resolved_at: new Date().toISOString() } : {})
-      }));
+      setComplaint(prev => {
+        const updated = {
+          ...prev,
+          status: newStatus,
+          ...updates
+        };
+        
+        if (newStatus === 'resolved' && updated.created_at) {
+          updated.resolutionTime = calculateResolutionTime(
+            new Date(updated.created_at),
+            new Date(updated.resolved_at)
+          );
+        } else if (newStatus !== 'resolved') {
+          updated.resolutionTime = null;
+        }
+        
+        return updated;
+      });
       
-      await addSystemComment(`Status changed to ${newStatus}`);
+      await addSystemComment(`Status changed to ${getStatusText(newStatus)}`);
       
     } catch (error) {
       console.error('Error updating status:', error);
@@ -189,12 +373,17 @@ const ComplaintDetail = () => {
     try {
       setStatusUpdating(true);
       
+      const updates = { 
+        assigned_to: user.id
+      };
+      
+      if (complaint.status === 'open') {
+        updates.status = 'in_progress';
+      }
+      
       const { error } = await supabase
         .from('complaints')
-        .update({ 
-          assigned_to: user.id,
-          status: complaint.status === 'open' ? 'in_progress' : complaint.status
-        })
+        .update(updates)
         .eq('id', id);
       
       if (error) throw error;
@@ -216,9 +405,48 @@ const ComplaintDetail = () => {
     }
   };
 
+  const handleAssignToDepartment = async (departmentId) => {
+    try {
+      setStatusUpdating(true);
+      
+      const updates = { 
+        department_id: departmentId
+      };
+      
+      const { error } = await supabase
+        .from('complaints')
+        .update(updates)
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      // Fetch department name for the comment
+      const { data: dept } = await supabase
+        .from('departments')
+        .select('name')
+        .eq('id', departmentId)
+        .single();
+      
+      const departmentName = dept?.name || `Department #${departmentId}`;
+      await addSystemComment(`Complaint assigned to ${departmentName} department`);
+      
+      setComplaint(prev => ({
+        ...prev,
+        department_id: departmentId,
+        departments: { ...prev.departments, id: departmentId, name: departmentName }
+      }));
+      
+    } catch (error) {
+      console.error('Error assigning complaint to department:', error);
+      alert('Failed to assign complaint to department. Please try again.');
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
   const addSystemComment = async (message) => {
     try {
-      await supabase
+      const { error } = await supabase
         .from('complaint_comments')
         .insert([{
           complaint_id: id,
@@ -226,6 +454,8 @@ const ComplaintDetail = () => {
           content: message,
           is_system: true
         }]);
+        
+      if (error) throw error;
       
       await fetchComments();
     } catch (error) {
@@ -255,6 +485,12 @@ const ComplaintDetail = () => {
       setComment('');
       await fetchComments();
       
+      const commentsSection = document.getElementById('comments-section');
+      if (commentsSection) {
+        setTimeout(() => {
+          commentsSection.scrollTop = commentsSection.scrollHeight;
+        }, 100);
+      }
     } catch (error) {
       console.error('Error submitting comment:', error);
       alert('Failed to submit comment. Please try again.');
@@ -264,14 +500,20 @@ const ComplaintDetail = () => {
   };
 
   const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric'
-    });
+    if (!dateString) return 'Unknown date';
+    
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric'
+      });
+    } catch (e) {
+      return 'Invalid date';
+    }
   };
 
   const getStatusIcon = (status) => {
@@ -309,7 +551,7 @@ const ComplaintDetail = () => {
       case 'resolved':
         return 'Resolved';
       default:
-        return status;
+        return status.charAt(0).toUpperCase() + status.slice(1);
     }
   };
 
@@ -385,7 +627,11 @@ const ComplaintDetail = () => {
                     </div>
                     <div className="flex items-center">
                       <User className="h-4 w-4 mr-2 text-gray-400" />
-                      {complaint.anonymous ? 'Anonymous' : `${complaint.users?.first_name} ${complaint.users?.last_name}`}
+                      {complaint.anonymous
+                        ? 'Anonymous'
+                        : complaint.reported_by_user 
+                          ? `${complaint.reported_by_user?.first_name} ${complaint.reported_by_user?.last_name}`
+                          : 'Unknown Reporter'}
                     </div>
                     <div className="flex items-center">
                       <AlertTriangle className="h-4 w-4 mr-2 text-gray-400" />
@@ -407,21 +653,27 @@ const ComplaintDetail = () => {
                   </p>
                 </div>
 
-                {complaint.processedImages && complaint.processedImages.length > 0 && (
+                {complaint.imageUrls && complaint.imageUrls.length > 0 && (
                   <div className="mb-6">
                     <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
                       <Image className="h-5 w-5 mr-2 text-gray-500" />
-                      Images
+                      Images ({complaint.imageUrls.length})
                     </h2>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                      {complaint.processedImages.map((image, index) => (
-                        <div key={index} className="relative overflow-hidden rounded-lg aspect-w-4 aspect-h-3 bg-gray-100">
-                          <img 
-                            src={typeof image === 'string' ? image : URL.createObjectURL(image)} 
-                            alt={`Evidence ${index + 1}`} 
-                            className="object-cover w-full h-full"
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                      {complaint.imageUrls.map((url, index) => (
+                        <a 
+                          key={index}
+                          href={url} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="block"
+                        >
+                          <img
+                            src={url}
+                            alt={`Evidence ${index + 1}`}
+                            className="object-cover w-full h-48 rounded-lg hover:opacity-90 transition duration-150"
                           />
-                        </div>
+                        </a>
                       ))}
                     </div>
                   </div>
@@ -435,9 +687,14 @@ const ComplaintDetail = () => {
                   {complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude ? (
                     <div>
                       <div ref={mapContainer} className="bg-gray-100 h-64 rounded-lg"></div>
-                      <p className="mt-2 text-sm text-gray-500">
-                        Latitude: {complaint.parsedLocation.latitude.toFixed(6)}, Longitude: {complaint.parsedLocation.longitude.toFixed(6)}
-                      </p>
+                      <div className="mt-2">
+                        {complaint.locationName ? (
+                          <p className="text-sm font-medium text-gray-700">{complaint.locationName}</p>
+                        ) : null}
+                        <p className="text-sm text-gray-500">
+                          Latitude: {complaint.parsedLocation.latitude.toFixed(6)}, Longitude: {complaint.parsedLocation.longitude.toFixed(6)}
+                        </p>
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-gray-100 h-64 rounded-lg flex items-center justify-center">
@@ -447,14 +704,14 @@ const ComplaintDetail = () => {
                   )}
                 </div>
 
-                {comments.length > 0 && (
-                  <div className="mb-6">
-                    <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
-                      <MessageSquare className="h-5 w-5 mr-2 text-gray-500" />
-                      Updates ({comments.length})
-                    </h2>
-                    
-                    <div className="space-y-4">
+                <div className="mb-6" id="comments-section">
+                  <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                    <MessageSquare className="h-5 w-5 mr-2 text-gray-500" />
+                    Updates ({comments.length})
+                  </h2>
+                  
+                  {comments.length > 0 ? (
+                    <div className="space-y-4 max-h-96 overflow-y-auto p-1">
                       {comments.map((comment) => (
                         <div 
                           key={comment.id} 
@@ -470,10 +727,10 @@ const ComplaintDetail = () => {
                             <div>
                               <div className="flex items-center mb-2">
                                 <div className="h-6 w-6 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs mr-2">
-                                  {comment.users.first_name.charAt(0)}
+                                  {comment.user?.first_name?.charAt(0) || 'U'}
                                 </div>
                                 <span className="font-medium text-gray-900">
-                                  {comment.users.first_name} {comment.users.last_name}
+                                  {comment.user?.first_name || 'Unknown'} {comment.user?.last_name || 'User'}
                                 </span>
                                 <span className="ml-auto text-xs text-gray-500">{formatDate(comment.created_at)}</span>
                               </div>
@@ -483,8 +740,13 @@ const ComplaintDetail = () => {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="text-center py-6 bg-gray-50 rounded-lg">
+                      <MessageSquare className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-gray-500">No updates yet</p>
+                    </div>
+                  )}
+                </div>
 
                 {(user && complaint.status !== 'resolved') && (
                   <div>
@@ -493,7 +755,7 @@ const ComplaintDetail = () => {
                       <textarea
                         value={comment}
                         onChange={(e) => setComment(e.target.value)}
-                        className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         rows="3"
                         placeholder="Add a comment or update..."
                         required
@@ -536,16 +798,19 @@ const ComplaintDetail = () => {
                       {complaint.assigned_to_user ? (
                         <div className="flex items-center p-3 bg-gray-50 rounded-md">
                           <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center text-white mr-3">
-                            {complaint.assigned_to_user.first_name.charAt(0)}
+                            {complaint.assigned_to_user.first_name?.charAt(0) || 'U'}
                           </div>
                           <div>
                             <p className="font-medium">
-                              {complaint.assigned_to_user.first_name} {complaint.assigned_to_user.last_name}
+                              {complaint.assigned_to_user.first_name || 'Unknown'} {complaint.assigned_to_user.last_name || 'User'}
                             </p>
                             <p className="text-xs text-gray-500">
                               {complaint.assigned_to_user.roles?.name || 'Staff'}
                             </p>
                           </div>
+                          {complaint.assigned_to === user.id && (
+                            <span className="ml-auto text-xs text-indigo-600 font-medium">You</span>
+                          )}
                         </div>
                       ) : (
                         <button
@@ -553,9 +818,60 @@ const ComplaintDetail = () => {
                           disabled={statusUpdating}
                           className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                         >
-                          {statusUpdating ? 'Assigning...' : 'Assign to me'}
+                          {statusUpdating ? (
+                            <>
+                              <Loader className="h-4 w-4 mr-2 animate-spin" />
+                              Assigning...
+                            </>
+                          ) : (
+                            'Assign to me'
+                          )}
                         </button>
                       )}
+                    </div>
+                    
+                    {/* Department assignment section */}
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-700 mb-2">Department Assignment</h3>
+                      {complaint.departments && complaint.department_id ? (
+                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+                          <div>
+                            <p className="font-medium">
+                              {complaint.departments.name || `Department #${complaint.department_id}`}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              Currently handling this complaint
+                            </p>
+                          </div>
+                          <div>
+                            <button
+                              onClick={() => document.getElementById('department-select').focus()}
+                              className="text-xs text-blue-600 hover:text-blue-800"
+                            >
+                              Change
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500 mb-2">No department assigned yet</p>
+                      )}
+                      
+                      <div className="mt-2">
+                        <select
+                          id="department-select"
+                          disabled={statusUpdating}
+                          value={complaint.department_id || ""}
+                          onChange={(e) => handleAssignToDepartment(e.target.value)}
+                          className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                        >
+                          <option value="">Select a department</option>
+                          {complaint.availableDepartments?.map(dept => (
+                            <option key={dept.id} value={dept.id}>
+                              {dept.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                     
                     <div>
@@ -600,9 +916,15 @@ const ComplaintDetail = () => {
                           Resolved
                         </button>
                       </div>
+                      {statusUpdating && (
+                        <div className="text-center text-xs text-gray-500 mt-2">Updating status...</div>
+                      )}
                     </div>
                     
-                    <button className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    <button 
+                      className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                      onClick={() => navigate(`/edit-complaint/${complaint.id}`)}
+                    >
                       <Edit className="h-5 w-5 mr-2" />
                       Edit Complaint
                     </button>
@@ -694,7 +1016,7 @@ const ComplaintDetail = () => {
                       </span>
                       <h3 className="flex items-center mb-1 text-sm font-semibold text-gray-900">In Progress</h3>
                       <time className="block mb-2 text-xs font-normal leading-none text-gray-400">
-                        {formatDate(new Date(new Date(complaint.created_at).getTime() + 86400000))}
+                        {complaint.status_change_date ? formatDate(complaint.status_change_date) : '(Date not recorded)'}
                       </time>
                       <p className="text-xs text-gray-500">
                         Work started on addressing this issue
@@ -711,12 +1033,35 @@ const ComplaintDetail = () => {
                       <time className="block mb-2 text-xs font-normal leading-none text-gray-400">
                         {formatDate(complaint.resolved_at || new Date())}
                       </time>
-                      <p className="text-xs text-gray-500">
+                      {complaint.resolutionTime && (
+                        <p className="text-xs text-green-500 font-semibold">
+                          Resolved in {complaint.resolutionTime}
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-500 mt-1">
                         Issue has been resolved successfully
                       </p>
                     </li>
                   )}
                 </ol>
+              </div>
+            </div>
+
+            <div className="bg-white shadow rounded-lg overflow-hidden">
+              <div className="p-6">
+                <h2 className="text-lg font-medium text-gray-900 mb-4">Related Issues</h2>
+                <div className="text-center py-8">
+                  <MapPin className="mx-auto h-8 w-8 text-gray-400" />
+                  <p className="mt-2 text-sm text-gray-500">
+                    No other issues reported in this area
+                  </p>
+                  <button 
+                    onClick={() => navigate('/map')}
+                    className="mt-3 inline-flex items-center text-blue-600 hover:text-blue-800"
+                  >
+                    View map <ChevronRight className="h-4 w-4 ml-1" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>

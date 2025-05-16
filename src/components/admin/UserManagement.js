@@ -90,6 +90,9 @@ const UserManagement = ({
   const handleAddUser = async (e) => {
     e.preventDefault();
     
+    // 1) Capture current admin session
+    const { data: { session: adminSession } } = await supabase.auth.getSession();
+
     if (!formData.email || !formData.password || !formData.first_name || !formData.last_name || !formData.role_id) {
       setActionResult({ 
         type: 'error', 
@@ -153,6 +156,12 @@ const UserManagement = ({
       
       // 4. Update local state
       setUsers(prev => [...prev, newUser]);
+
+      // 5) Restore admin session so we're not switched to the new user
+      await supabase.auth.setSession({
+        access_token: adminSession.access_token,
+        refresh_token: adminSession.refresh_token,
+      });
       
       setActionResult({ 
         type: 'success', 

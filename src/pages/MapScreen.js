@@ -17,6 +17,36 @@ import * as turf from '@turf/turf';
 import { parseLocation } from '../utils/locationFormatter';
 import { canAccessAnalysisTools } from '../utils/userPermissions';
 import '../styles/map-custom.css';
+import { getCachedLocationName } from '../utils/locationUtils';
+
+// Add this function to get user location
+const getUserLocation = () => {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      console.log('Geolocation is not supported by your browser');
+      reject(new Error('Geolocation not supported'));
+      return;
+    }
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude
+        });
+      },
+      (error) => {
+        console.warn('Error getting user location:', error.message);
+        reject(error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0
+      }
+    );
+  });
+};
 
 const MapScreen = () => {
   const navigate = useNavigate();
@@ -39,8 +69,8 @@ const MapScreen = () => {
   // Map configuration options
   const [mapConfig, setMapConfig] = useState({
     style: 'mapbox://styles/mapbox/streets-v11',
-    latitude: 40.7128,
-    longitude: -74.0060,
+    latitude: 40.7128, // Default location (will be replaced with user location)
+    longitude: -74.0060, // Default location (will be replaced with user location)
     zoom: 12,
     showHeatmap: false,
     showClusters: true, // Default to showing clusters
@@ -68,6 +98,51 @@ const MapScreen = () => {
     mapRef.current = mapInstance;
   };
 
+  useEffect(() => {
+    // Get user location when the component mounts
+    const setInitialLocation = async () => {
+      try {
+        const location = await getUserLocation();
+        console.log('Got user location:', location);
+        
+        // Update map configuration with user's location
+        setMapConfig(prevConfig => ({
+          ...prevConfig,
+          latitude: location.latitude,
+          longitude: location.longitude
+        }));
+        
+        // If map is already loaded, fly to the user's location
+        if (mapRef.current && mapLoaded) {
+          try {
+            mapRef.current.flyTo(location.longitude, location.latitude, 14);
+            console.log('Map centered on user location');
+          } catch (error) {
+            console.error('Error centering map on user location:', error);
+          }
+        }
+      } catch (error) {
+        console.warn('Could not get user location, using default:', error);
+        // Continue with default coordinates
+      }
+    };
+    
+    setInitialLocation();
+  }, [mapLoaded]); // Only run when mapLoaded changes to true
+
+useEffect(() => {
+  // Check if we have the map reference and complaints with location names
+  if (mapRef.current && complaints.length > 0 && mapLoaded) {
+    // Check if there's been a change in location names
+    const locationNamesLoaded = complaints.some(c => c.locationName && !c.needsLocationName);
+    
+    if (locationNamesLoaded) {
+      // Update the map with the new data including location names
+      console.log('Updating map with location names');
+      mapRef.current.updateMapData(complaints);
+    }
+  }
+}, [complaints, mapLoaded]);
   // Fetch data on component mount
 // In your useEffect that fetches user and data
 useEffect(() => {
@@ -127,14 +202,185 @@ useEffect(() => {
       console.error('Error fetching categories:', error);
     }
   };
+// Fix the useEffect that updates map when location names are loaded
+useEffect(() => {
+  // Check if we have complaints with location names
+  if (complaints.length > 0 && mapRef.current && mapLoaded) {
+    // Check if there are complaints with location names
+    const hasLocationNames = complaints.some(c => c.locationName);
+    
+    // Only update if we have location names to display
+    if (hasLocationNames) {
+      console.log('Location names loaded, updating map data');
+      
+      // Make sure we update the map data in the MapComponent
+      // We need to pass the complaints to any method that will update the GeoJSON source
+      try {
+        // Get the map source and update it directly
+        const map = mapRef.current;
+        if (map.updateMapData) {
+          map.updateMapData(complaints);
+        } else {
+          // Fallback approach if the method isn't available
+          // This accesses the map instance directly (not ideal but works as fallback)
+          const mapInstance = map.getMap?.();
+          if (mapInstance) {
+            const source = mapInstance.getSource('complaints');
+            if (source) {
+              // Create GeoJSON features from complaints
+              const features = complaints
+                .filter(c => c.coordinates && c.coordinates.length === 2)
+                .map(complaint => ({
+                  type: 'Feature',
+                  geometry: {
+                    type: 'Point',
+                    coordinates: complaint.coordinates
+                  },
+                  properties: {
+                    id: complaint.id,
+                    title: complaint.title || 'Untitled Complaint',
+                    status: complaint.status || 'unknown',
+                    category_id: complaint.category_id,
+                    category_name: complaint.categories?.name || 'Uncategorized',
+                    color: getStatusColor(complaint.status),
+                    created_at: complaint.created_at || '',
+                    reported_by_name: complaint.reported_by_name || 'Unknown User',
+                    anonymous: complaint.anonymous ? 'true' : 'false',
+                    location_name: complaint.locationName || 'Loading location...'
+                  }
+                }));
+                
+              // Update the GeoJSON source
+              source.setData({
+                type: 'FeatureCollection',
+                features
+              });
+              console.log(`Updated map with ${features.length} features`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error updating map with location names:', err);
+      }
+    }
+  }
+}, [complaints, mapLoaded]);
 
-// Updated fetchComplaints function
+// Helper function to get status color
+const getStatusColor = (status) => {
+  switch (status) {
+    case 'open': return '#e74c3c';
+    case 'in_progress': return '#f39c12';
+    case 'resolved': return '#2ecc71';
+    default: return '#95a5a6';
+  }
+};
+  // Add this utility function to the MapScreen component
+// Add this utility function to the MapScreen component
+const ensureComplaintsHaveValidLocations = useCallback((complaintsToCheck) => {
+  // Only run this if we have complaints and they don't all have valid locations
+  if (!complaintsToCheck || complaintsToCheck.length === 0) return complaintsToCheck;
+  
+  const validLocationCount = complaintsToCheck.filter(c => 
+    c.parsedLocation && c.coordinates && c.coordinates.length === 2
+  ).length;
+  
+  if (validLocationCount === complaintsToCheck.length) {
+    return complaintsToCheck; // All valid, no need for further processing
+  }
+  
+  console.log(`Re-processing locations: ${validLocationCount}/${complaintsToCheck.length} are currently valid`);
+  
+  return complaintsToCheck.map(complaint => {
+    // Skip if already has valid location
+    if (complaint.parsedLocation && 
+        complaint.coordinates && 
+        complaint.coordinates.length === 2) {
+      return complaint;
+    }
+    
+    try {
+      if (complaint.location) {
+        // Special handling for PostGIS WKB hex format
+        if (typeof complaint.location === 'string' && 
+            complaint.location.startsWith('0101000020E6100000')) {
+          
+          // Parse the WKB hex string for EWKB format from PostGIS
+          // Format: 0101000020E6100000[X COORDINATE (8 bytes)][Y COORDINATE (8 bytes)]
+          try {
+            const str = complaint.location;
+            // Extract X and Y from specific positions in the string
+            if (str.length >= 42) {
+              // Get the two 8-byte double values after the header
+              const xHex = str.substring(18, 34);
+              const yHex = str.substring(34, 50);
+              
+              // Need to handle endianness by reversing byte order
+              const getDoubleFromHex = (hex) => {
+                // Group by byte pairs
+                const bytes = [];
+                for (let i = 0; i < hex.length; i += 2) {
+                  bytes.push(parseInt(hex.substring(i, i + 2), 16));
+                }
+                
+                // Create a buffer to read as a double
+                const buffer = new ArrayBuffer(8);
+                const view = new DataView(buffer);
+                
+                // PostGIS uses little-endian format
+                for (let i = 0; i < 8; i++) {
+                  view.setUint8(i, bytes[i]);
+                }
+                
+                return view.getFloat64(0, true); // true = little endian
+              };
+              
+              // The order is longitude, latitude in PostGIS
+              const lng = getDoubleFromHex(xHex);
+              const lat = getDoubleFromHex(yHex);
+              
+              // Validate coordinates
+              if (!isNaN(lat) && !isNaN(lng) && 
+                  Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                complaint.parsedLocation = { latitude: lat, longitude: lng };
+                complaint.coordinates = [lng, lat]; // GeoJSON format [lng, lat]
+                console.log(`Successfully parsed WKB hex for complaint ${complaint.id}: ${lat}, ${lng}`);
+              }
+            }
+          } catch (wkbError) {
+            console.error(`Error parsing WKB for complaint ${complaint.id}:`, wkbError);
+          }
+        } else {
+          // Try standard location parsing approaches
+          let parsedLocation = parseLocation(complaint.location);
+          
+          // Apply if valid
+          if (parsedLocation && 
+              parsedLocation.latitude && 
+              parsedLocation.longitude &&
+              !isNaN(parsedLocation.latitude) && 
+              !isNaN(parsedLocation.longitude) &&
+              Math.abs(parsedLocation.latitude) <= 90 &&
+              Math.abs(parsedLocation.longitude) <= 180) {
+              
+            complaint.parsedLocation = parsedLocation;
+            complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error re-parsing location for complaint ${complaint.id}:`, error);
+    }
+    return complaint;
+  });
+}, []);
 const fetchComplaints = async (userData) => {
   try {
     // Start with loading state
     setLoading(true);
     console.log("Fetching complaints...");
     
+    // Fetch complaints with categories and add reporter info if available
     let query = supabase
       .from('complaints')
       .select(`
@@ -176,34 +422,154 @@ const fetchComplaints = async (userData) => {
 
     console.log(`Fetched ${data ? data.length : 0} complaints`);
     
-    // Process the complaints to add parsed location
+    // Process the complaints to add parsed location with multiple approaches
     const processedComplaints = data?.map(complaint => {
       try {
-        if (complaint.location) {
-          const parsedLocation = parseLocation(complaint.location);
-          
-          if (parsedLocation && 
-              parsedLocation.latitude && 
-              parsedLocation.longitude &&
-              !isNaN(parsedLocation.latitude) && 
-              !isNaN(parsedLocation.longitude) &&
-              Math.abs(parsedLocation.latitude) <= 90 &&
-              Math.abs(parsedLocation.longitude) <= 180) {
-            
-            complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
-            complaint.parsedLocation = parsedLocation;
+        // Process location with multiple methods for greater reliability
+        let parsedLocation = null;
+        
+        // 1. First try direct parsing if location is a string
+        if (typeof complaint.location === 'string') {
+          // Special handling for PostGIS WKB hex format
+          if (complaint.location.startsWith('0101000020E6100000')) {
+            try {
+              const str = complaint.location;
+              // Extract X and Y from specific positions in the string
+              if (str.length >= 42) {
+                // Get the two 8-byte double values after the header
+                const xHex = str.substring(18, 34);
+                const yHex = str.substring(34, 50);
+                
+                // Need to handle endianness by reversing byte order
+                const getDoubleFromHex = (hex) => {
+                  // Group by byte pairs
+                  const bytes = [];
+                  for (let i = 0; i < hex.length; i += 2) {
+                    bytes.push(parseInt(hex.substring(i, i + 2), 16));
+                  }
+                  
+                  // Create a buffer to read as a double
+                  const buffer = new ArrayBuffer(8);
+                  const view = new DataView(buffer);
+                  
+                  // PostGIS uses little-endian format
+                  for (let i = 0; i < 8; i++) {
+                    view.setUint8(i, bytes[i]);
+                  }
+                  
+                  return view.getFloat64(0, true); // true = little endian
+                };
+                
+                // The order is longitude, latitude in PostGIS
+                const lng = getDoubleFromHex(xHex);
+                const lat = getDoubleFromHex(yHex);
+                
+                // Validate coordinates
+                if (!isNaN(lat) && !isNaN(lng) && 
+                    Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                  parsedLocation = { latitude: lat, longitude: lng };
+                }
+              }
+            } catch (wkbError) {
+              console.error(`Error parsing WKB for complaint ${complaint.id}:`, wkbError);
+            }
           } else {
-            complaint.coordinates = null;
-            complaint.parsedLocation = null;
+            // Other string formats...
+            // Check for WKT format like: POINT(lng lat)
+            const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
+            if (pointMatch && pointMatch.length >= 3) {
+              const lng = parseFloat(pointMatch[1]);
+              const lat = parseFloat(pointMatch[2]);
+              
+              if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                parsedLocation = { latitude: lat, longitude: lng };
+              }
+            } else {
+              // Try to find any numbers in the string that might be coordinates
+              const coordMatch = complaint.location.match(/[-+]?\d+\.\d+/g);
+              if (coordMatch && coordMatch.length >= 2) {
+                // Simple heuristic for lat/lng order
+                let lat, lng;
+                const first = parseFloat(coordMatch[0]);
+                const second = parseFloat(coordMatch[1]);
+                
+                if (Math.abs(first) > 90) {
+                  lng = first;
+                  lat = second;
+                } else {
+                  lat = first;
+                  lng = second;
+                }
+                
+                if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                  parsedLocation = { latitude: lat, longitude: lng };
+                }
+              }
+            }
           }
-        } else {
-          complaint.coordinates = null;
-          complaint.parsedLocation = null;
+        } 
+        // 2. Try if location is an object (GeoJSON format)
+        else if (complaint.location && typeof complaint.location === 'object') {
+          // Standard formats handling...
+          if (complaint.location.type === 'Point' && 
+              Array.isArray(complaint.location.coordinates) && 
+              complaint.location.coordinates.length >= 2) {
+            const [lng, lat] = complaint.location.coordinates;
+            if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+              parsedLocation = { latitude: lat, longitude: lng };
+            }
+          } else if ((complaint.location.latitude !== undefined || complaint.location.lat !== undefined) &&
+                     (complaint.location.longitude !== undefined || complaint.location.lng !== undefined)) {
+            const lat = complaint.location.latitude !== undefined ? 
+              complaint.location.latitude : complaint.location.lat;
+            const lng = complaint.location.longitude !== undefined ? 
+              complaint.location.longitude : complaint.location.lng;
+              
+            if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+              parsedLocation = { latitude: lat, longitude: lng };
+            }
+          }
         }
+        
+        // If we still don't have a valid location, try using the parseLocation utility
+        if (!parsedLocation && complaint.location) {
+          parsedLocation = parseLocation(complaint.location);
+        }
+        
+        // Apply the parsed location if valid
+        if (parsedLocation && 
+            parsedLocation.latitude !== undefined && 
+            parsedLocation.longitude !== undefined &&
+            !isNaN(parsedLocation.latitude) && 
+            !isNaN(parsedLocation.longitude) &&
+            Math.abs(parsedLocation.latitude) <= 90 &&
+            Math.abs(parsedLocation.longitude) <= 180) {
+            
+          complaint.parsedLocation = parsedLocation;
+          // Store coordinates in GeoJSON format [longitude, latitude]
+          complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
+          
+          // Mark that we need to fetch a location name
+          complaint.needsLocationName = true;
+        } else {
+          complaint.parsedLocation = null;
+          complaint.coordinates = null;
+        }
+        
+        // Handle reporter information
+        if (complaint.anonymous) {
+          complaint.reported_by_name = 'Anonymous User';
+        } else if (complaint.reported_by) {
+          // Just ensure we have a consistent format
+          if (!complaint.reported_by_name) {
+            complaint.reported_by_name = `User #${complaint.reported_by}`;
+          }
+        }
+        
       } catch (error) {
         console.error(`Error parsing location for complaint ${complaint.id}:`, error);
-        complaint.coordinates = null;
         complaint.parsedLocation = null;
+        complaint.coordinates = null;
       }
       return complaint;
     }) || [];
@@ -214,7 +580,12 @@ const fetchComplaints = async (userData) => {
     
     console.log(`Successfully parsed locations: ${validLocations}/${processedComplaints.length}`);
 
+    // Set complaints first
     setComplaints(processedComplaints);
+    
+    // Then start fetching location names in the background
+    fetchLocationNames(processedComplaints);
+    
   } catch (error) {
     console.error('Error fetching complaints:', error);
   } finally {
@@ -222,7 +593,113 @@ const fetchComplaints = async (userData) => {
   }
 };
 
-// Updated showNearbyComplaints function
+// Add this helper function for fetching location names
+// Updated fetchLocationNames function with better error handling
+const fetchLocationNames = async (complaintsList) => {
+  if (!complaintsList || complaintsList.length === 0) return;
+  
+  // Process in smaller batches to avoid too many simultaneous API calls
+  const batchSize = 3;
+  const validComplaints = complaintsList.filter(c => 
+    c.coordinates && 
+    c.coordinates.length === 2 && 
+    (!c.locationName || c.locationName === 'Loading location...')
+  );
+  
+  console.log(`Fetching location names for ${validComplaints.length} complaints`);
+  
+  // Process in batches
+  for (let i = 0; i < validComplaints.length; i += batchSize) {
+    try {
+      const batch = validComplaints.slice(i, i + batchSize);
+      
+      // Process this batch in parallel
+      const promises = batch.map(async (complaint) => {
+        try {
+          if (!complaint.coordinates || complaint.coordinates.length !== 2) {
+            return { id: complaint.id, locationName: 'Invalid coordinates' };
+          }
+          
+          const [lng, lat] = complaint.coordinates;
+          let locationName = await getCachedLocationName(lng, lat);
+          
+          // If we couldn't get a detailed location name, try to get at least city-level info
+          if (!locationName) {
+            try {
+              // Simple reverse geocoding for city-level information
+              const response = await fetch(
+                `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${process.env.REACT_APP_MAPBOX_TOKEN}&types=place,locality,neighborhood`
+              );
+              
+              if (response.ok) {
+                const data = await response.json();
+                
+                // Extract city or general location name
+                if (data.features && data.features.length > 0) {
+                  locationName = data.features[0].text || data.features[0].place_name;
+                  console.log(`Found general location for complaint ${complaint.id}: ${locationName}`);
+                }
+              }
+            } catch (geocodeError) {
+              console.warn(`Couldn't get general location for complaint ${complaint.id}:`, geocodeError);
+            }
+          }
+          
+          // If we still don't have a location name, fall back to coordinates
+          return { 
+            id: complaint.id, 
+            locationName: locationName || `General area near ${lat.toFixed(4)}, ${lng.toFixed(4)}`
+          };
+        } catch (error) {
+          console.error(`Error fetching location name for complaint ${complaint.id}:`, error);
+          
+          // Try to extract coordinates from complaint to provide some location context
+          const coords = complaint.coordinates || [];
+          const locationText = coords.length === 2 ? 
+            `General area near ${coords[1]?.toFixed(4) || '?'}, ${coords[0]?.toFixed(4) || '?'}` : 
+            'Unknown location';
+            
+          return { 
+            id: complaint.id, 
+            locationName: locationText
+          };
+        }
+      });
+      
+      // Wait for all in this batch to complete
+      const results = await Promise.all(promises);
+      
+      // Update complaints in state with new location names
+      setComplaints(prevComplaints => {
+        const updatedComplaints = [...prevComplaints];
+        
+        // Update each complaint with its location name
+        results.forEach(result => {
+          if (result) {
+            const index = updatedComplaints.findIndex(c => c.id === result.id);
+            if (index !== -1) {
+              updatedComplaints[index] = {
+                ...updatedComplaints[index],
+                locationName: result.locationName
+              };
+            }
+          }
+        });
+        
+        return updatedComplaints;
+      });
+      
+      // Small delay to avoid rate limiting
+      if (i + batchSize < validComplaints.length) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    } catch (error) {
+      console.error('Error processing location batch:', error);
+      // Continue with next batch despite errors
+    }
+  }
+};
+// Fix the nearby complaints functionality
 const showNearbyComplaints = useCallback(async (radius = 1000) => {
   if (!mapRef.current) {
     alert('Map not fully initialized yet. Please try again in a moment.');
@@ -232,19 +709,44 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
   try {
     setLoading(true);
     
-    // Get current map center
-    const center = mapRef.current.getCenter();
-    console.log(`Finding complaints near ${center.lng}, ${center.lat} with radius ${radius}m`);
+    // Get the map instance and verify we can get the center
+    let center;
     
-    // Try client-side filtering first
-    let nearbyComplaints = [];
+    if (typeof mapRef.current.getCenter === 'function') {
+      // Direct method on ref
+      center = mapRef.current.getCenter();
+    } else if (mapRef.current.getMap && typeof mapRef.current.getMap === 'function') {
+      // Get from underlying map
+      const mapInstance = mapRef.current.getMap();
+      if (mapInstance && typeof mapInstance.getCenter === 'function') {
+        center = mapInstance.getCenter();
+      }
+    }
+    
+    // Validate center coordinates
+    if (!center || isNaN(center.lng) || isNaN(center.lat)) {
+      console.error('Invalid map center:', center);
+      throw new Error('Could not get valid map coordinates');
+    }
+    
+    console.log(`Finding complaints near ${center.lng}, ${center.lat} with radius ${radius}m`);
     
     // Filter complaints by distance using Turf.js
     const centerPoint = turf.point([center.lng, center.lat]);
     
-    nearbyComplaints = complaints.filter(complaint => {
-      if (!complaint.parsedLocation || !complaint.coordinates) return false;
-      
+    // First ensure all complaints have valid locations
+    const validComplaints = complaints.filter(complaint => 
+      complaint.coordinates && 
+      Array.isArray(complaint.coordinates) && 
+      complaint.coordinates.length === 2 &&
+      !isNaN(complaint.coordinates[0]) && 
+      !isNaN(complaint.coordinates[1])
+    );
+    
+    console.log(`Found ${validComplaints.length} complaints with valid coordinates out of ${complaints.length} total`);
+    
+    // Then filter by distance
+    const nearbyComplaints = validComplaints.filter(complaint => {
       try {
         const complaintPoint = turf.point(complaint.coordinates);
         const distance = turf.distance(centerPoint, complaintPoint, {units: 'meters'});
@@ -255,27 +757,30 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
       }
     });
     
-    console.log(`Found ${nearbyComplaints.length} nearby complaints (client-side)`);
+    console.log(`Found ${nearbyComplaints.length} nearby complaints within ${radius}m radius`);
     
-    // Visualize the radius on the map
-    if (mapRef.current.createBuffer) {
+    // Visualize the radius on the map using our buffer function
+    if (typeof mapRef.current.enableDrawingMode === 'function') {
       try {
-        // Create a point feature at center
-        if (mapRef.current.enableDrawingMode) {
-          mapRef.current.enableDrawingMode('point');
-          
-          // Small delay to ensure draw mode is active
-          setTimeout(() => {
-            if (mapRef.current.addPointFeature) {
-              mapRef.current.addPointFeature([center.lng, center.lat]);
+        mapRef.current.enableDrawingMode('point');
+        
+        // Wait for drawing mode to be active
+        setTimeout(() => {
+          // Try to get the underlying Draw instance
+          if (mapRef.current && mapRef.current.getMap) {
+            const map = mapRef.current.getMap();
+            if (map) {
+              // Try to create a point and buffer directly
+              try {
+                setTimeout(() => mapRef.current.createBuffer(radius), 300);
+              } catch (bufferErr) {
+                console.warn('Error creating buffer visualization:', bufferErr);
+              }
             }
-            setTimeout(() => mapRef.current.createBuffer(radius), 100);
-          }, 100);
-        } else {
-          mapRef.current.createBuffer(radius);
-        }
-      } catch (bufferErr) {
-        console.warn('Error creating buffer visualization:', bufferErr);
+          }
+        }, 200);
+      } catch (error) {
+        console.warn('Error setting up buffer visualization:', error);
       }
     }
     
@@ -286,12 +791,32 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
       complaints: nearbyComplaints
     });
     
-    // Focus map on this area
-    mapRef.current.flyTo({
-      center: [center.lng, center.lat],
-      zoom: Math.max(14, mapRef.current.getZoom()),
-      duration: 1000
-    });
+    // Try to focus map with proper error handling
+    try {
+      if (mapRef.current) {
+        // Different ways to access flyTo functionality
+        if (typeof mapRef.current.flyTo === 'function') {
+          mapRef.current.flyTo({
+            center: [center.lng, center.lat],
+            zoom: 14,
+            duration: 1000
+          });
+        } else if (mapRef.current.getMap && typeof mapRef.current.getMap === 'function') {
+          const map = mapRef.current.getMap();
+          if (map && typeof map.flyTo === 'function') {
+            map.flyTo({
+              center: [center.lng, center.lat],
+              zoom: 14,
+              duration: 1000
+            });
+          }
+        }
+      }
+    } catch (flyError) {
+      console.warn('Error navigating map:', flyError);
+      // Continue without navigation - this isn't a critical failure
+    }
+    
   } catch (error) {
     console.error('Error finding nearby complaints:', error);
     alert('Error finding nearby complaints. Please try again.');
@@ -299,7 +824,6 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
     setLoading(false);
   }
 }, [complaints]);
-
   const fetchDepartmentBoundaries = async (userData) => {
     try {
       let query = supabase
@@ -545,51 +1069,63 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
   }, [navigate]);
 
 
-  const ensureComplaintsHaveValidLocations = useCallback((complaintsToCheck) => {
-    // Only run this if we have complaints and they don't all have valid locations
-    if (!complaintsToCheck || complaintsToCheck.length === 0) return complaintsToCheck;
-    
-    const validLocationCount = complaintsToCheck.filter(c => 
-      c.parsedLocation && c.coordinates && c.coordinates.length === 2
-    ).length;
-    
-    if (validLocationCount === complaintsToCheck.length) {
-      return complaintsToCheck; // All valid, no need for further processing
-    }
-    
-    console.log(`Re-processing locations: ${validLocationCount}/${complaintsToCheck.length} are currently valid`);
-    
-    return complaintsToCheck.map(complaint => {
-      // Skip if already has valid location
-      if (complaint.parsedLocation && 
-          complaint.coordinates && 
-          complaint.coordinates.length === 2) {
-        return complaint;
-      }
-      
-      try {
-        if (complaint.location) {
-          const parsedLocation = parseLocation(complaint.location);
-          
-          if (parsedLocation && 
-              parsedLocation.latitude && 
-              parsedLocation.longitude &&
-              !isNaN(parsedLocation.latitude) && 
-              !isNaN(parsedLocation.longitude) &&
-              Math.abs(parsedLocation.latitude) <= 90 &&
-              Math.abs(parsedLocation.longitude) <= 180) {
-              
-            complaint.parsedLocation = parsedLocation;
-            complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
-          }
-        }
-      } catch (error) {
-        console.error(`Error re-parsing location for complaint ${complaint.id}:`, error);
-      }
-      return complaint;
-    });
-  }, []);
 
+useEffect(() => {
+  // Set up custom event listener for complaint selection with improved handling
+  const handleSelectComplaint = (event) => {
+    try {
+      const { complaint } = event.detail;
+      if (complaint) {
+        console.log('Selected complaint:', complaint.id, complaint.title);
+        
+        setSelectedComplaint(complaint);
+        
+        // If we have coordinates, center the map on the complaint
+        if (complaint.coordinates && 
+            complaint.coordinates.length === 2 && 
+            !isNaN(complaint.coordinates[0]) && 
+            !isNaN(complaint.coordinates[1]) && 
+            mapRef.current) {
+          
+          // Try different approaches to fly to the coordinates
+          try {
+            // First try the flyTo method directly
+            if (mapRef.current.flyTo) {
+              mapRef.current.flyTo({
+                center: complaint.coordinates,
+                zoom: 15,
+                duration: 1000
+              });
+            } 
+            // Then try to access the underlying map instance
+            else if (mapRef.current.getMap && typeof mapRef.current.getMap === 'function') {
+              const mapInstance = mapRef.current.getMap();
+              if (mapInstance && mapInstance.flyTo) {
+                mapInstance.flyTo({
+                  center: complaint.coordinates,
+                  zoom: 15,
+                  duration: 1000
+                });
+              }
+            }
+          } catch (flyError) {
+            console.warn('Could not fly to complaint location:', flyError);
+          }
+        } else {
+          console.warn('Cannot center on complaint - missing valid coordinates:', complaint.id);
+        }
+      }
+    } catch (error) {
+      console.error('Error handling complaint selection:', error);
+    }
+  };
+
+  window.addEventListener('selectComplaint', handleSelectComplaint);
+  
+  return () => {
+    window.removeEventListener('selectComplaint', handleSelectComplaint);
+  };
+}, []);
   useEffect(() => {
     if (complaints.length > 0) {
       const updatedComplaints = ensureComplaintsHaveValidLocations(complaints);

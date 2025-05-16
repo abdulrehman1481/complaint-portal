@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Ruler, Calendar, MapPin } from 'lucide-react';
 
-const NearbyComplaintsPanel = ({ info, onClose, onChangeRadius, onSelectComplaint }) => {
+const NearbyComplaintsPanel = ({ info, onClose, onChangeRadius }) => {
   // Move useState outside of conditional
   const [newRadius, setNewRadius] = useState(info?.radius || 1000);
   
@@ -27,6 +27,22 @@ const NearbyComplaintsPanel = ({ info, onClose, onChangeRadius, onSelectComplain
     } catch (e) {
       return 'N/A';
     }
+  };
+
+  // Function to get complaint category name
+  const getCategoryName = (complaint) => {
+    if (complaint.categories && complaint.categories.name) {
+      return complaint.categories.name;
+    }
+    return 'Uncategorized';
+  };
+
+  // Function to get proper reporter name
+  const getReporterName = (complaint) => {
+    if (complaint.anonymous) return 'Anonymous User';
+    if (complaint.reported_by_name) return complaint.reported_by_name;
+    if (complaint.reported_by) return `User #${complaint.reported_by}`;
+    return 'Unknown User';
   };
 
   return (
@@ -67,16 +83,35 @@ const NearbyComplaintsPanel = ({ info, onClose, onChangeRadius, onSelectComplain
               {complaints.map(complaint => (
                 <li 
                   key={complaint.id}
-                  onClick={() => onSelectComplaint && onSelectComplaint(complaint)}
+                  onClick={() => window.dispatchEvent(new CustomEvent('selectComplaint', { 
+                    detail: { complaint } 
+                  }))}
                   className="p-2 bg-gray-50 rounded hover:bg-blue-50 cursor-pointer"
                 >
-                  <div className="font-medium text-sm">{complaint.title}</div>
-                  <div className="flex items-center text-xs text-gray-500 mt-1">
-                    <Calendar className="h-3 w-3 mr-1" />
-                    {formatDate(complaint.created_at)}
-                    <div className="mx-1">•</div>
-                    <MapPin className="h-3 w-3 mr-1" />
-                    {complaint.categories?.name || 'Uncategorized'}
+                  <div className="font-medium text-sm">{complaint.title || 'Untitled Complaint'}</div>
+                  <div className="flex items-center justify-between text-xs text-gray-500 mt-1">
+                    <div className="flex items-center">
+                      <Calendar className="h-3 w-3 mr-1" />
+                      {formatDate(complaint.created_at)}
+                    </div>
+                    <div className="flex items-center">
+                      <MapPin className="h-3 w-3 mr-1" />
+                      {getCategoryName(complaint)}
+                    </div>
+                  </div>
+                  <div className="mt-1 flex justify-between items-center">
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                      complaint.status === 'open' ? 'bg-red-100 text-red-800' :
+                      complaint.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-green-100 text-green-800'
+                    }`}>
+                      {complaint.status === 'in_progress' ? 'In Progress' : 
+                       complaint.status ? complaint.status.charAt(0).toUpperCase() + complaint.status.slice(1) : 
+                       'Unknown'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {complaint.anonymous ? 'Anonymous' : 'Reported by ' + getReporterName(complaint)}
+                    </span>
                   </div>
                 </li>
               ))}

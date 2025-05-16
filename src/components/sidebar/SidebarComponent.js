@@ -2,6 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, MapPin, Filter, Layers, Activity, List, Info, Shield } from 'lucide-react';
 import { canAccessAnalysisTools, isDepartmentAdmin } from '../../utils/userPermissions';
 
+// Helper functions
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A';
+  const date = new Date(dateString);
+  return date.toLocaleDateString();
+};
+
+const formatStatus = (status) => {
+  if (!status) return 'Unknown';
+  return status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+};
+
+const getStatusClass = (status) => {
+  switch (status) {
+    case 'open':
+      return 'bg-red-100 text-red-800';
+    case 'in_progress':
+      return 'bg-yellow-100 text-yellow-800';
+    case 'resolved':
+      return 'bg-green-100 text-green-800';
+    default:
+      return 'bg-gray-100 text-gray-800';
+  }
+};
+
 const SidebarComponent = ({
   activeTab,
   setActiveTab,
@@ -89,6 +114,39 @@ const SidebarComponent = ({
     setSelectedBase(baseType);
     toggleBaseMapStyle(baseType);
   };
+
+// Fix the handleComplaintClick function
+const handleComplaintClick = (complaint) => {
+  if (!complaint) return;
+  
+  // Validate coordinates before using them
+  const hasValidCoordinates = complaint.coordinates && 
+    Array.isArray(complaint.coordinates) &&
+    complaint.coordinates.length === 2 &&
+    !isNaN(complaint.coordinates[0]) &&
+    !isNaN(complaint.coordinates[1]);
+  
+  // Dispatch event to select complaint for detailed view
+  const selectEvent = new CustomEvent('selectComplaint', {
+    detail: { complaint }
+  });
+  window.dispatchEvent(selectEvent);
+  
+  // Only attempt to fly to the complaint if coordinates are valid
+  if (hasValidCoordinates && mapRef.current && mapRef.current.flyTo) {
+    try {
+      mapRef.current.flyTo({
+        center: complaint.coordinates,
+        zoom: 15,
+        duration: 1000
+      });
+    } catch (error) {
+      console.warn('Unable to fly to complaint location:', error);
+    }
+  } else {
+    console.warn('Cannot fly to complaint location - invalid coordinates or missing map reference');
+  }
+};
 
   // Return different tabs based on user role
   const getTabs = () => {
@@ -227,42 +285,36 @@ const SidebarComponent = ({
             <div>
               <h3 className="text-sm font-medium text-gray-700 mb-2">Complaints ({complaints.length})</h3>
               {complaints.length > 0 ? (
-                <div className="space-y-2">
-                  {complaints.slice(0, 50).map((complaint) => (
-                    <div 
+                <ul className="space-y-2">
+                  {complaints.map(complaint => (
+                    <li 
                       key={complaint.id} 
-                      className="border border-gray-200 rounded-md p-3 cursor-pointer hover:bg-gray-50"
-                      onClick={() => setSelectedComplaint(complaint)}
+                      className="p-3 hover:bg-blue-50 cursor-pointer border-b"
+                      onClick={() => handleComplaintClick(complaint)}
                     >
                       <div className="flex justify-between">
-                        <div className="font-medium text-sm">{complaint.title || 'Untitled Complaint'}</div>
-                        <div className={`text-xs px-2 py-1 rounded-full ${
-                          complaint.status === 'open' ? 'bg-red-100 text-red-800' :
-                          complaint.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-green-100 text-green-800'
-                        }`}>
-                          {complaint.status === 'in_progress' ? 'In Progress' : 
-                           complaint.status ? complaint.status.charAt(0).toUpperCase() + complaint.status.slice(1) : 'Unknown'}
+                        <div className="font-medium">{complaint.title || 'Untitled Complaint'}</div>
+                        <span className={`text-xs px-2 py-1 rounded-full ${getStatusClass(complaint.status)}`}>
+                          {formatStatus(complaint.status)}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-500 mt-1">
+                        <div className="flex items-center">
+                          <MapPin className="h-3 w-3 mr-1" />
+                          {complaint.locationName || 'Loading location...'}
+                        </div>
+                        <div className="flex justify-between items-center mt-1">
+                          <div className="text-xs">
+                            {formatDate(complaint.created_at)}
+                          </div>
+                          <div className="text-xs">
+                            ID: #{complaint.id}
+                          </div>
                         </div>
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {complaint.created_at ? new Date(complaint.created_at).toLocaleDateString() : 'Date unknown'}
-                      </div>
-                      <div className="text-xs flex items-center mt-1 text-gray-600">
-                        <MapPin size={12} className="mr-1" />
-                        {complaint.parsedLocation ? 
-                          `${complaint.parsedLocation.latitude.toFixed(4)}, ${complaint.parsedLocation.longitude.toFixed(4)}` : 
-                          'Location unavailable'
-                        }
-                      </div>
-                    </div>
+                    </li>
                   ))}
-                  {complaints.length > 50 && (
-                    <div className="text-center text-xs text-gray-500 mt-2">
-                      Showing 50 of {complaints.length} complaints
-                    </div>
-                  )}
-                </div>
+                </ul>
               ) : (
                 <div className="text-center py-8 text-gray-500">
                   No complaints found matching your filters

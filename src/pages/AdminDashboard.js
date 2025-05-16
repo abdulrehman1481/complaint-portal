@@ -14,6 +14,7 @@ import DashboardStats from '../components/admin/DashboardStats';
 import ComplaintsTable from '../components/admin/ComplaintsTable';
 import UserManagement from '../components/admin/UserManagement';
 import DepartmentManagement from '../components/admin/DepartmentManagement';
+import Analytics from './analytics'; // Import the Analytics component
 
 // Import the fixed location parser
 import { parseLocation, formatLocationForDisplay } from '../utils/locationFormatter';
@@ -1400,11 +1401,7 @@ const AdminDashboard = () => {
 
           {/* Analytics Tab */}
           {activeTab === 'analytics' && (
-            <div className="text-center py-8">
-              <BarChart2 className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Analytics Dashboard</h3>
-              <p className="text-gray-500">Analytics components would be displayed here</p>
-            </div>
+            <Analytics /> // Replace the placeholder analytics content with the Analytics component
           )}
 
           {/* Settings Tab */}

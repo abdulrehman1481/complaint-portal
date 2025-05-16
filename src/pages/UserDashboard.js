@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useNavigate } from 'react-router-dom';
@@ -19,6 +19,7 @@ import {
   Bell
 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 const UserDashboard = () => {
   const [user, setUser] = useState(null);
@@ -30,22 +31,34 @@ const UserDashboard = () => {
     inProgress: 0,
     resolved: 0
   });
+  const [communityStats, setCommunityStats] = useState({
+    categories: [],
+    statusDistribution: []
+  });
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchUserData();
-    
-    // Setup map preview
-    const cleanup = createMapPreview();
-    
-    return () => {
-      if (cleanup) cleanup();
-    };
+    fetchCommunityStats();
   }, []);
+
+  useEffect(() => {
+    if (mapContainerRef.current) {
+      initializeMapPreview();
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [mapContainerRef.current]);
 
   const fetchUserData = async () => {
     try {
-      // Get the current user
       const { data: { user: authUser } } = await supabase.auth.getUser();
       
       if (!authUser) {
@@ -53,7 +66,6 @@ const UserDashboard = () => {
         return;
       }
 
-      // Fetch user details with role information
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select(`
@@ -71,7 +83,6 @@ const UserDashboard = () => {
       
       setUser({ ...authUser, ...userData });
 
-      // Fetch user's complaints
       const { data: userComplaints, error: complaintsError } = await supabase
         .from('complaints')
         .select(`
@@ -85,7 +96,6 @@ const UserDashboard = () => {
       
       setComplaints(userComplaints || []);
 
-      // Calculate stats
       const totalComplaints = userComplaints?.length || 0;
       const openComplaints = userComplaints?.filter(c => c.status === 'open')?.length || 0;
       const inProgressComplaints = userComplaints?.filter(c => c.status === 'in_progress')?.length || 0;
@@ -105,6 +115,49 @@ const UserDashboard = () => {
     }
   };
 
+  const fetchCommunityStats = async () => {
+    try {
+      const { data: categories, error: categoryError } = await supabase
+        .rpc('get_complaints_by_category')
+        .limit(5);
+      
+      if (categoryError) throw categoryError;
+      
+      const statusData = [
+        { name: 'Open', value: 0, color: '#EF4444' },
+        { name: 'In Progress', value: 0, color: '#F59E0B' },
+        { name: 'Resolved', value: 0, color: '#10B981' }
+      ];
+      
+      const { data: openCount } = await supabase
+        .from('complaints')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'open');
+        
+      const { data: inProgressCount } = await supabase
+        .from('complaints')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'in_progress');
+        
+      const { data: resolvedCount } = await supabase
+        .from('complaints')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'resolved');
+      
+      statusData[0].value = openCount?.length || 0;
+      statusData[1].value = inProgressCount?.length || 0;
+      statusData[2].value = resolvedCount?.length || 0;
+      
+      setCommunityStats({
+        categories: categories || [],
+        statusDistribution: statusData
+      });
+      
+    } catch (error) {
+      console.error('Error fetching community stats:', error);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate('/');
@@ -118,90 +171,108 @@ const UserDashboard = () => {
     navigate('/map');
   };
 
-  const createMapPreview = () => {
-    const MAPBOX_TOKEN = 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
-
-    // Check if we already created a preview to avoid multiple instances
-    if (window.mapPreviewInstance) return;
+  const initializeMapPreview = () => {
+    const MAPBOX_TOKEN = process.env.REACT_APP_MAPBOX_TOKEN || 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
     
-    const mapPreviewContainer = document.getElementById('map-preview');
-    if (!mapPreviewContainer) return;
+    if (!mapContainerRef.current) return;
     
     try {
       console.log('Initializing user dashboard map preview');
       
-      // Create a simple preview map
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+      }
+      
+      mapboxgl.accessToken = MAPBOX_TOKEN;
+      
       const map = new mapboxgl.Map({
-        container: 'map-preview',
+        container: mapContainerRef.current,
         style: 'mapbox://styles/mapbox/streets-v11',
-        center: [-74.5, 40], // Default center - will be updated with user location
+        center: [-74.5, 40],
         zoom: 9,
-        accessToken: MAPBOX_TOKEN
+        interactive: true
       });
       
-      // Add navigation control
-      map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
       
-      // Add geolocate control with auto trigger
-      const geolocateControl = new mapboxgl.GeolocateControl({
-        positionOptions: {
-          enableHighAccuracy: true
-        },
-        trackUserLocation: true,
-        showUserHeading: true
-      });
-      map.addControl(geolocateControl, 'top-right');
+      mapInstanceRef.current = map;
       
-      // Store reference to avoid multiple instances
-      window.mapPreviewInstance = map;
-      
-      // Add event listener for when the map loads
-      map.on('load', () => {
+      map.on('load', async () => {
         console.log('Map preview loaded');
         
-        // Try to get user's current location
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              map.flyTo({
-                center: [position.coords.longitude, position.coords.latitude],
-                zoom: 12
-              });
-              
-              // Add a marker at the user's current location
-              new mapboxgl.Marker({color: '#3498db'})
-                .setLngLat([position.coords.longitude, position.coords.latitude])
-                .addTo(map);
-              
-              console.log('Map preview centered on user location');
-            },
-            (error) => {
-              console.warn('Error getting location for map preview:', error);
-            },
-            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-          );
+        let centerPoint = null;
+        let validComplaints = complaints.filter(complaint => 
+          complaint.location && typeof complaint.location === 'object'
+        );
+        
+        if (validComplaints.length > 0) {
+          const points = validComplaints
+            .map(complaint => {
+              if (complaint.location.latitude && complaint.location.longitude) {
+                return [complaint.location.longitude, complaint.location.latitude];
+              } else if (complaint.location.lng && complaint.location.lat) {
+                return [complaint.location.lng, complaint.location.lat];
+              } else if (complaint.coordinates && complaint.coordinates.length === 2) {
+                return complaint.coordinates;
+              }
+              return null;
+            })
+            .filter(point => point !== null);
+          
+          if (points.length > 0) {
+            const center = points.reduce(
+              (acc, point) => {
+                return [acc[0] + point[0]/points.length, acc[1] + point[1]/points.length];
+              },
+              [0, 0]
+            );
+            
+            centerPoint = center;
+            
+            points.forEach(point => {
+              try {
+                new mapboxgl.Marker({ color: '#3498db' })
+                  .setLngLat(point)
+                  .addTo(map);
+              } catch (e) {
+                console.warn('Error adding marker:', e);
+              }
+            });
+          }
         }
         
-        // Trigger geolocate after map load
-        setTimeout(() => {
+        if (!centerPoint) {
           try {
-            geolocateControl.trigger();
-          } catch (err) {
-            console.warn('Could not trigger geolocate control:', err);
+            const position = await new Promise((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(resolve, reject, {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0
+              });
+            });
+            
+            centerPoint = [position.coords.longitude, position.coords.latitude];
+            
+            new mapboxgl.Marker({ color: '#e67e22' })
+              .setLngLat(centerPoint)
+              .addTo(map);
+            
+          } catch (error) {
+            console.warn('Could not get user location:', error);
+            centerPoint = [-74.5, 40];
           }
-        }, 1000);
-      });
-      
-      // Clean up on component unmount
-      return () => {
-        if (window.mapPreviewInstance) {
-          window.mapPreviewInstance.remove();
-          window.mapPreviewInstance = null;
         }
-      };
+        
+        if (centerPoint) {
+          map.flyTo({
+            center: centerPoint,
+            zoom: 11.5,
+            essential: true
+          });
+        }
+      });
     } catch (error) {
       console.error('Error initializing map preview:', error);
-      return null;
     }
   };
 
@@ -222,7 +293,6 @@ const UserDashboard = () => {
     );
   }
 
-  // Check if user has admin permissions
   const isAdmin = user?.roles?.name === 'Super Admin' || user?.roles?.name === 'Department Admin';
 
   return (
@@ -240,7 +310,6 @@ const UserDashboard = () => {
               <div className="relative">
                 <button className="p-1 rounded-full text-gray-500 hover:text-gray-600 focus:outline-none">
                   <Bell className="h-6 w-6" />
-                  {/* Notification indicator */}
                   <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500"></span>
                 </button>
               </div>
@@ -271,7 +340,6 @@ const UserDashboard = () => {
       <div className="py-10">
         <main>
           <div className="max-w-7xl mx-auto sm:px-6 lg:px-8">
-            {/* Header section with greeting and action buttons */}
             <div className="px-4 sm:px-0 flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
               <div>
                 <h2 className="text-2xl font-bold leading-tight text-gray-900">
@@ -307,7 +375,6 @@ const UserDashboard = () => {
               </div>
             </div>
 
-            {/* Stats Cards */}
             <div className="mt-4 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
               <div className="bg-white overflow-hidden shadow rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
@@ -382,7 +449,6 @@ const UserDashboard = () => {
               </div>
             </div>
 
-            {/* Recent Complaints */}
             <div className="mt-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium leading-6 text-gray-900">Your Recent Reports</h3>
@@ -416,7 +482,7 @@ const UserDashboard = () => {
                           <div className="mt-2 flex justify-between">
                             <div className="sm:flex">
                               <p className="flex items-center text-sm text-gray-500">
-                                {complaint.categories.icon} {complaint.categories.name}
+                                {complaint.categories?.icon || '📍'} {complaint.categories?.name || 'General'}
                               </p>
                               <p className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 sm:ml-6">
                                 <Calendar className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
@@ -443,16 +509,14 @@ const UserDashboard = () => {
               </div>
             </div>
 
-            {/* Additional sections: Map preview or community stats */}
             <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
-              {/* Map preview */}
               <div className="bg-white shadow sm:rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
                   <h3 className="text-lg leading-6 font-medium text-gray-900">
                     Community Map
                   </h3>
-                  <div className="mt-4 aspect-w-16 aspect-h-9 bg-gray-200 rounded-lg">
-                    <div id="map-preview" className="h-48"></div>
+                  <div className="mt-4 aspect-w-16 aspect-h-9 bg-gray-100 rounded-lg">
+                    <div ref={mapContainerRef} className="h-64 w-full rounded-lg"></div>
                   </div>
                   <div className="mt-5">
                     <button
@@ -466,22 +530,49 @@ const UserDashboard = () => {
                 </div>
               </div>
 
-              {/* Community stats */}
               <div className="bg-white shadow sm:rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
                   <h3 className="text-lg leading-6 font-medium text-gray-900">
                     Community Statistics
                   </h3>
                   <div className="mt-4">
-                    <div className="flex items-center justify-center h-48">
-                      <BarChart2 className="h-12 w-12 text-gray-400" />
-                      <p className="ml-2 text-gray-500">Statistics visualization</p>
-                    </div>
+                    {communityStats.statusDistribution.length > 0 ? (
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={communityStats.statusDistribution}
+                              cx="50%"
+                              cy="50%"
+                              labelLine={false}
+                              outerRadius={80}
+                              fill="#8884d8"
+                              dataKey="value"
+                              nameKey="name"
+                              label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                            >
+                              {communityStats.statusDistribution.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(value) => [`${value} complaints`, 'Count']} />
+                            <Legend />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center h-48">
+                        <div className="text-center">
+                          <BarChart2 className="h-12 w-12 text-gray-400 mx-auto" />
+                          <p className="mt-2 text-gray-500">Loading statistics data...</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-5">
                     <button
                       type="button"
-                      onClick={() => navigate('/statistics')}
+                      onClick={() => navigate('/analytics')}
                       className="w-full inline-flex items-center justify-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50"
                     >
                       View Community Statistics
@@ -491,7 +582,38 @@ const UserDashboard = () => {
               </div>
             </div>
 
-            {/* Account settings / Profile section */}
+            {communityStats.categories.length > 0 && (
+              <div className="mt-8 bg-white shadow sm:rounded-lg">
+                <div className="px-4 py-5 sm:p-6">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900 mb-4">
+                    Top Issue Categories
+                  </h3>
+                  <div className="space-y-3">
+                    {communityStats.categories.map((category, index) => (
+                      <div key={index} className="flex items-center">
+                        <div className="w-1/3 sm:w-1/4 text-sm font-medium text-gray-500">{category.name}</div>
+                        <div className="w-2/3 sm:w-3/4">
+                          <div className="relative pt-1">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="w-full bg-gray-200 rounded-full h-4">
+                                  <div 
+                                    className="bg-blue-600 rounded-full h-4" 
+                                    style={{ width: `${Math.min(100, (category.count / communityStats.categories[0].count) * 100)}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                              <span className="text-xs font-semibold text-blue-700 ml-2">{category.count}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-8 bg-white shadow sm:rounded-lg">
               <div className="px-4 py-5 sm:p-6">
                 <div className="flex items-center justify-between">

@@ -43,6 +43,144 @@ const ComplaintPopup = ({ complaint, onClose, isAdmin = false }) => {
           status.charAt(0).toUpperCase() + status.slice(1);
   };
 
+  // Format location display with proper error handling
+  const formatLocation = () => {
+    // If there's a cached location name from reverse geocoding
+    if (complaint.locationName) {
+      // Show coordinates and location name
+      if (complaint.coordinates && 
+          Array.isArray(complaint.coordinates) && 
+          complaint.coordinates.length >= 2 &&
+          !isNaN(complaint.coordinates[0]) && 
+          !isNaN(complaint.coordinates[1])) {
+        
+        // GeoJSON format is [longitude, latitude]
+        const longitude = complaint.coordinates[0];
+        const latitude = complaint.coordinates[1];
+        
+        return (
+          <div>
+            <div>{complaint.locationName}</div>
+            <div className="text-xs text-gray-400 mt-1">
+              ({latitude.toFixed(6)}, {longitude.toFixed(6)})
+            </div>
+          </div>
+        );
+      }
+      
+      // If we have parsedLocation as a backup
+      if (complaint.parsedLocation && 
+          complaint.parsedLocation.latitude !== undefined && 
+          complaint.parsedLocation.longitude !== undefined &&
+          !isNaN(complaint.parsedLocation.latitude) && 
+          !isNaN(complaint.parsedLocation.longitude)) {
+        
+        const { latitude, longitude } = complaint.parsedLocation;
+        return (
+          <div>
+            <div>{complaint.locationName}</div>
+            <div className="text-xs text-gray-400 mt-1">
+              ({latitude.toFixed(6)}, {longitude.toFixed(6)})
+            </div>
+          </div>
+        );
+      }
+      
+      return complaint.locationName;
+    }
+    
+    // Fall back to previous location display logic
+    // First try to use coordinates in GeoJSON format
+    if (complaint.coordinates && 
+        Array.isArray(complaint.coordinates) && 
+        complaint.coordinates.length >= 2 &&
+        !isNaN(complaint.coordinates[0]) && 
+        !isNaN(complaint.coordinates[1])) {
+      
+      // For GeoJSON, format is [longitude, latitude]
+      return `${complaint.coordinates[1].toFixed(6)}, ${complaint.coordinates[0].toFixed(6)}`;
+    }
+    
+    // Try parsed location
+    if (complaint.parsedLocation && 
+        complaint.parsedLocation.latitude !== undefined && 
+        complaint.parsedLocation.longitude !== undefined &&
+        !isNaN(complaint.parsedLocation.latitude) && 
+        !isNaN(complaint.parsedLocation.longitude)) {
+      
+      const { latitude, longitude } = complaint.parsedLocation;
+      return `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+    }
+    
+    // If there's an address field with content
+    if (complaint.address && complaint.address.trim()) {
+      return complaint.address;
+    }
+    
+    // Try to parse location string
+    if (typeof complaint.location === 'string') {
+      // Try to extract coordinates using regex
+      const coordMatch = complaint.location.match(/[-+]?\d+\.\d+/g);
+      if (coordMatch && coordMatch.length >= 2) {
+        try {
+          return `${parseFloat(coordMatch[0]).toFixed(6)}, ${parseFloat(coordMatch[1]).toFixed(6)}`;
+        } catch (e) {
+          console.warn('Error parsing coordinates from string:', e);
+        }
+      }
+      
+      // If WKT format
+      const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
+      if (pointMatch && pointMatch.length >= 3) {
+        try {
+          return `${parseFloat(pointMatch[2]).toFixed(6)}, ${parseFloat(pointMatch[1]).toFixed(6)}`;
+        } catch (e) {
+          console.warn('Error parsing WKT point:', e);
+        }
+      }
+      
+      // Return the raw string if it's not too long
+      if (complaint.location.length < 100) {
+        return complaint.location;
+      }
+    }
+    
+    return 'Location information unavailable';
+  };
+
+  // Get reporter name - FIXED to handle different data structures
+  const getReporterName = () => {
+    if (complaint.anonymous) return 'Anonymous User';
+    
+    // Check all possible paths for user information
+    if (complaint.reported_by_name) return complaint.reported_by_name;
+    if (complaint.reporter && complaint.reporter.name) return complaint.reporter.name;
+    if (complaint.reported_by_email) return complaint.reported_by_email;
+    
+    // If we just have a user ID
+    if (complaint.reported_by) return `User #${complaint.reported_by}`;
+    
+    return 'Unknown User';
+  };
+
+  // Function to get proper image URL
+  const getImageUrl = (image) => {
+    if (!image) return null;
+    
+    // If already a full URL
+    if (image.startsWith('http')) {
+      return image;
+    }
+    
+    // Check for environment variables
+    if (process.env.REACT_APP_SUPABASE_URL) {
+      return `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/public/complaint-images/${image}`;
+    }
+    
+    // Fallback to hardcoded URL if needed
+    return `https://jlpoojswmseemptyvued.supabase.co/storage/v1/object/public/complaint-images/${image}`;
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
@@ -60,7 +198,7 @@ const ComplaintPopup = ({ complaint, onClose, isAdmin = false }) => {
         {/* Content */}
         <div className="p-4">
           <div className="mb-4">
-            <h2 className="text-xl font-semibold text-gray-800">{complaint.title}</h2>
+            <h2 className="text-xl font-semibold text-gray-800">{complaint.title || 'Untitled Complaint'}</h2>
             
             <div className="flex items-center mt-2">
               <span className={`text-xs px-2 py-1 rounded-full border ${getStatusClass(complaint.status)}`}>
@@ -89,24 +227,22 @@ const ComplaintPopup = ({ complaint, onClose, isAdmin = false }) => {
             </div>
             
             {/* Reporter */}
-            {!complaint.anonymous && (
-              <div className="flex items-center text-sm">
-                <User size={16} className="text-gray-400 mr-2" />
-                <span className="font-medium">Reported by:</span>
-                <span className="ml-1">{complaint.reported_by_name || 'Unknown'}</span>
-              </div>
-            )}
+            <div className="flex items-center text-sm">
+              <User size={16} className="text-gray-400 mr-2" />
+              <span className="font-medium">Reported by:</span>
+              <span className="ml-1">{getReporterName()}</span>
+            </div>
             
             {/* Description */}
             <div className="mt-3">
               <div className="flex items-start">
                 <MessageCircle size={16} className="text-gray-400 mr-2 mt-1" />
-                <div>
-                  <span className="font-medium text-sm">Description:</span>
-                  <p className="mt-1 text-gray-700 text-sm whitespace-pre-wrap">
-                    {complaint.description || 'No description provided.'}
-                  </p>
-                </div>
+<div className="text-gray-700">
+  <div className="mt-2">
+    <div className="font-semibold">Description:</div>
+    {complaint.description || "No description provided."}
+  </div>
+</div>
               </div>
             </div>
             
@@ -114,10 +250,7 @@ const ComplaintPopup = ({ complaint, onClose, isAdmin = false }) => {
             <div className="mt-3">
               <span className="font-medium text-sm">Location:</span>
               <p className="mt-1 text-gray-700 text-sm">
-                {complaint.parsedLocation ? 
-                  `${complaint.parsedLocation.latitude.toFixed(6)}, ${complaint.parsedLocation.longitude.toFixed(6)}` : 
-                  'Location unavailable'
-                }
+                {formatLocation()}
               </p>
             </div>
             
@@ -129,16 +262,22 @@ const ComplaintPopup = ({ complaint, onClose, isAdmin = false }) => {
                   {complaint.images.map((image, index) => (
                     <a 
                       key={index}
-                      href={image}
+                      href={getImageUrl(image)} 
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="block"
+                      className="block relative"
                     >
-                      <img 
-                        src={image} 
-                        alt={`Complaint ${complaint.id} - image ${index + 1}`} 
-                        className="w-full h-24 object-cover rounded border border-gray-200"
-                      />
+                      <div className="aspect-w-4 aspect-h-3 border border-gray-200 rounded overflow-hidden">
+                        <img 
+                          src={getImageUrl(image)} 
+                          alt={`Complaint ${complaint.id} - image ${index + 1}`} 
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = "https://via.placeholder.com/150?text=Image+Not+Found";
+                          }}
+                          className="w-full h-full object-cover rounded"
+                        />
+                      </div>
                     </a>
                   ))}
                 </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
@@ -58,9 +58,115 @@ const MapComponent = forwardRef(({
   const [analysisLayer, setAnalysisLayer] = useState(null);
   const [isAnalysisInProgress, setIsAnalysisInProgress] = useState(false);
 
-  // Helper function to count points within an area
-// Fix the countPointsInArea function
-// Fix the countPointsInArea function to properly handle turf.js polygon analysis
+  useImperativeHandle(ref, () => ({
+    // Flyto function to navigate the map
+    flyTo: (options) => {
+      if (mapInstance.current) {
+        mapInstance.current.flyTo(options);
+      }
+    },
+    // Get the current map center coordinates
+    getCenter: () => {
+      if (mapInstance.current) {
+        return mapInstance.current.getCenter();
+      }
+      return null;
+    },
+      getZoom: () => {
+    if (!mapInstance.current) return 12; // Default zoom level
+    return mapInstance.current.getZoom();
+  },
+  
+  // Get the map instance itself for direct access
+  getMap: () => {
+    return mapInstance.current;
+  },
+  
+    // Enable drawing mode for the map
+    enableDrawingMode: (mode) => {
+      if (drawInstance.current) {
+        // Implementation...
+      }
+    },
+    // Disable drawing mode
+    disableDrawingMode: () => {
+      if (drawInstance.current) {
+        // Implementation...
+      }
+    },
+    // Create buffer around a point
+    createBuffer: (distance) => {
+      // Implementation...
+    },
+    // Add this method to update map data with new complaint information
+    updateMapData: (newComplaints) => {
+      if (!mapInstance.current || !newComplaints) return;
+      
+      console.log(`updateMapData called with: ${newComplaints.length} complaints (first id: ${newComplaints[0]?.id})`);
+      
+      // Filter out complaints with invalid location data
+      const validComplaints = newComplaints.filter(complaint => 
+        complaint.coordinates && 
+        Array.isArray(complaint.coordinates) && 
+        complaint.coordinates.length === 2
+      );
+      
+      console.log(`Found ${validComplaints.length} valid complaints out of ${newComplaints.length}`);
+      
+      if (validComplaints.length === 0) {
+        console.log("No valid complaints with location data");
+        return;
+      }
+      
+      // Create GeoJSON features
+      const features = validComplaints.map(complaint => {
+        const statusColorMap = {
+          'open': '#e74c3c',  // Red
+          'in_progress': '#f39c12',  // Orange
+          'resolved': '#2ecc71',  // Green
+        };
+        
+        const categoryName = complaint.categories?.name || 'Uncategorized';
+        const categoryIcon = getCategoryIcon(categoryName);
+        const statusColor = statusColorMap[complaint.status] || '#95a5a6';
+        
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: complaint.coordinates
+          },
+          properties: {
+            id: complaint.id,
+            title: complaint.title || 'Untitled Complaint',
+            status: complaint.status || 'unknown',
+            category_id: complaint.category_id,
+            category_name: categoryName,
+            category_icon: categoryIcon,
+            color: statusColor,
+            created_at: complaint.created_at || '',
+            created_at_raw: complaint.created_at || '',
+            reported_by_name: complaint.reported_by_name || 'Unknown User',
+            anonymous: complaint.anonymous ? 'true' : 'false',
+            location_name: complaint.locationName || 'Loading location...',
+            priority: complaint.priority || 1
+          }
+        };
+      });
+      
+      // Update GeoJSON source
+      const source = mapInstance.current.getSource('complaints');
+      if (source) {
+        source.setData({
+          type: 'FeatureCollection',
+          features
+        });
+        console.log(`Updated map with ${features.length} features`);
+      } else {
+        console.error('Complaints source not found on map');
+      }
+    }
+  }));
 
 const countPointsInArea = (feature) => {
   if (!mapInstance.current) return { totalPoints: 0 };
@@ -236,21 +342,54 @@ const countPointsInArea = (feature) => {
     getMapInstance: () => mapInstance.current,
     
     // Get the center of the map
-    getCenter: () => {
-      if (!mapInstance.current) return { lng: 0, lat: 0 };
-      const center = mapInstance.current.getCenter();
-      return { lng: center.lng, lat: center.lat };
-    },
+// Update the getCenter method in your useImperativeHandle ref object
+getCenter: () => {
+  if (!mapInstance.current) return { lng: 0, lat: 0 };
+  
+  try {
+    const center = mapInstance.current.getCenter();
+    
+    // Validate center coordinates
+    if (!center || typeof center.lng !== 'number' || typeof center.lat !== 'number' || 
+        isNaN(center.lng) || isNaN(center.lat)) {
+      console.warn('Invalid map center coordinates');
+      return { lng: 0, lat: 0 }; // Return default coordinates
+    }
+    
+    return { lng: center.lng, lat: center.lat };
+  } catch (error) {
+    console.error('Error getting map center:', error);
+    return { lng: 0, lat: 0 }; // Return default coordinates on error
+  }
+},
     
     // Fly to a specific location
-    flyTo: (lng, lat, zoom = 15) => {
-      if (!mapInstance.current) return;
-      mapInstance.current.flyTo({
-        center: [lng, lat],
-        zoom: zoom,
-        essential: true
-      });
-    },
+// Update the flyTo method in your useImperativeHandle ref object
+flyTo: (lng, lat, zoom = 15) => {
+  if (!mapInstance.current) return;
+  
+  // Validate coordinates to prevent NaN errors
+  if (typeof lng !== 'number' || isNaN(lng) || typeof lat !== 'number' || isNaN(lat)) {
+    console.warn(`Invalid coordinates for flyTo: (${lng}, ${lat})`);
+    return;
+  }
+
+  // Check if coordinates are within valid range
+  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+    console.warn(`Coordinates out of range for flyTo: (${lng}, ${lat})`);
+    return;
+  }
+  
+  try {
+    mapInstance.current.flyTo({
+      center: [lng, lat],
+      zoom: zoom,
+      essential: true
+    });
+  } catch (error) {
+    console.error('Error in flyTo:', error);
+  }
+},
     
     // Enable drawing mode - improved implementation
 // Improve the enableDrawingMode method in your useImperativeHandle ref object
@@ -475,79 +614,133 @@ deleteAllDrawings: () => {
 },
     
     // Create a buffer around selected features - fixed implementation
-    createBuffer: (distance) => {
-      if (!mapInstance.current || !drawInstance.current) return null;
+// Update the createBuffer method to handle invalid coordinates:
+createBuffer: (distance) => {
+  if (!mapInstance.current || !drawInstance.current) return null;
+  
+  try {
+    setIsAnalysisInProgress(true);
+    
+    // Get selected features
+    let features = drawInstance.current.getSelected().features;
+    
+    // If no features are selected, check if we have any drawn features
+    if (features.length === 0) {
+      const allFeatures = drawInstance.current.getAll().features;
       
+      if (allFeatures.length > 0) {
+        // Select the first feature automatically
+        drawInstance.current.changeMode('simple_select', { 
+          featureIds: [allFeatures[0].id] 
+        });
+        features = [allFeatures[0]];
+        console.log("Auto-selected first drawn feature for buffer analysis");
+      } else {
+// Create a point feature at map center with improved validation
+const center = mapInstance.current.getCenter();
+        
+// Validate that center contains valid numbers
+if (!center || isNaN(center.lng) || isNaN(center.lat)) {
+  console.error('Invalid map center coordinates for buffer analysis.');
+  setIsAnalysisInProgress(false);
+  return null;
+}
+
+// Validate coordinates are within valid ranges
+if (center.lng < -180 || center.lng > 180 || center.lat < -90 || center.lat > 90) {
+  console.error('Map center coordinates out of valid range for buffer analysis.');
+  setIsAnalysisInProgress(false);
+  return null;
+}
+        
+// Create a point feature at map center
+const centerFeature = {
+  type: 'Feature',
+  id: 'center-point-' + Date.now(),
+  properties: { 
+    source: 'map-center',
+    description: 'Auto-created point for buffer analysis'
+  },
+  geometry: {
+    type: 'Point',
+    coordinates: [center.lng, center.lat]
+  }
+};
+        
+
+        
+        // Add this feature to the draw instance and select it
+        const addedFeatures = drawInstance.current.add(centerFeature);
+        
+        if (addedFeatures.length > 0) {
+          drawInstance.current.changeMode('simple_select', { 
+            featureIds: [addedFeatures[0]]
+          });
+          features = [centerFeature];
+          console.log("Created and selected map center point for buffer analysis");
+        }
+      }
+    }
+    
+    if (features.length === 0) {
+      alert('Could not select or create a feature for buffer analysis.');
+      setIsAnalysisInProgress(false);
+      return null;
+    }
+    
+    console.log("Creating buffer for features:", features);
+    console.log("Buffer distance:", distance);
+    
+    // Validate coordinates in all features before processing
+    for (const feature of features) {
+      if (!feature.geometry || !feature.geometry.coordinates) {
+        throw new Error('Feature missing valid geometry');
+      }
+      
+      // For points, ensure coordinates are valid numbers
+      if (feature.geometry.type === 'Point') {
+        if (feature.geometry.coordinates.length < 2 || 
+            isNaN(feature.geometry.coordinates[0]) || 
+            isNaN(feature.geometry.coordinates[1])) {
+          throw new Error('Feature has invalid coordinates');
+        }
+      }
+    }
+    
+    // Validate feature coordinates before buffering
+    // Check special case for Point features with potentially invalid coordinates
+    for (const feature of features) {
+      if (feature.geometry && feature.geometry.type === 'Point') {
+      const coords = feature.geometry.coordinates;
+      
+      // Check if coordinates are valid numbers
+      if (!Array.isArray(coords) || coords.length < 2 || 
+        isNaN(parseFloat(coords[0])) || isNaN(parseFloat(coords[1]))) {
+        
+        console.error('Invalid point coordinates:', coords);
+        
+        // Use map center as fallback for invalid points
+        const center = mapInstance.current.getCenter();
+        feature.geometry.coordinates = [center.lng, center.lat];
+        console.log('Replaced invalid coordinates with map center:', [center.lng, center.lat]);
+      }
+      }
+    }
+    
+    console.log("Creating buffers for features with validated coordinates");
+    const bufferedFeatures = [];
+    for (const feature of features) {
       try {
-        setIsAnalysisInProgress(true);
-        
-        // Get selected features
-        let features = drawInstance.current.getSelected().features;
-        
-        // If no features are selected, check if we have any drawn features
-        if (features.length === 0) {
-          const allFeatures = drawInstance.current.getAll().features;
-          
-          if (allFeatures.length > 0) {
-            // Select the first feature automatically
-            drawInstance.current.changeMode('simple_select', { 
-              featureIds: [allFeatures[0].id] 
-            });
-            features = [allFeatures[0]];
-            console.log("Auto-selected first drawn feature for buffer analysis");
-          } else {
-            // If no drawn features, use the current map center
-            const center = mapInstance.current.getCenter();
-            
-            // Create a point feature at map center
-            const centerFeature = {
-              type: 'Feature',
-              id: 'center-point-' + Date.now(),
-              properties: { 
-                source: 'map-center',
-                description: 'Auto-created point for buffer analysis'
-              },
-              geometry: {
-                type: 'Point',
-                coordinates: [center.lng, center.lat]
-              }
-            };
-            
-            // Add this feature to the draw instance and select it
-            const addedFeatures = drawInstance.current.add(centerFeature);
-            
-            if (addedFeatures.length > 0) {
-              drawInstance.current.changeMode('simple_select', { 
-                featureIds: [addedFeatures[0]]
-              });
-              features = [centerFeature];
-              console.log("Created and selected map center point for buffer analysis");
-            }
-          }
-        }
-        
-        if (features.length === 0) {
-          alert('Could not select or create a feature for buffer analysis.');
-          setIsAnalysisInProgress(false);
-          return null;
-        }
-        
-        console.log("Creating buffer for features:", features);
-        console.log("Buffer distance:", distance);
-        
-        // Rest of the existing buffer creation code
-        const bufferedFeatures = [];
-        for (const feature of features) {
-          try {
-            // Convert distance from meters to kilometers for turf
-            const distanceKm = distance / 1000;
-            const buffered = turf.buffer(feature, distanceKm, { units: 'kilometers' });
-            console.log("Created buffer:", buffered);
-            bufferedFeatures.push(buffered);
-          } catch (err) {
-            console.error('Error creating buffer with turf:', err, feature);
-          }
-        }
+        // Convert distance from meters to kilometers for turf
+        const distanceKm = distance / 1000;
+        const buffered = turf.buffer(feature, distanceKm, { units: 'kilometers' });
+        console.log("Created buffer:", buffered);
+        bufferedFeatures.push(buffered);
+      } catch (err) {
+        console.error('Error creating buffer with turf:', err, feature);
+      }
+    }
+    
         
         if (bufferedFeatures.length === 0) {
           alert('Failed to create buffer. Please try again with a different feature.');
@@ -1636,137 +1829,72 @@ countPointsInPolygon: () => {
   // Update map data when complaints change - fixed implementation with proper date handling
 // Update the updateMapData function
 
-const updateMapData = (complaintsData) => {
-  console.log('updateMapData called with:', 
-  complaintsData ? 
-  `${complaintsData.length} complaints (first id: ${complaintsData[0]?.id})` : 
-  'no data'
-);
-  if (!mapInstance.current) {
-    console.warn('Map instance not available for updating data');
+// In the updateMapData method
+const updateMapData = useCallback((newComplaints) => {
+  if (!mapInstance.current || !newComplaints) return;
+  
+  console.log(`updateMapData called with: ${newComplaints.length} complaints (first id: ${newComplaints[0]?.id})`);
+  
+  // Filter out complaints with invalid location data
+  const validComplaints = newComplaints.filter(complaint => 
+    complaint.coordinates && 
+    Array.isArray(complaint.coordinates) && 
+    complaint.coordinates.length === 2
+  );
+  
+  console.log(`Found ${validComplaints.length} valid complaints out of ${newComplaints.length}`);
+  
+  if (validComplaints.length === 0) {
+    console.log(" No valid complaints with location data");
     return;
   }
   
-  try {
-    if (!complaintsData || !Array.isArray(complaintsData)) {
-      console.warn('Invalid complaints data provided', complaintsData);
-      return;
-    }
+  // Create GeoJSON features
+  const features = validComplaints.map(complaint => {
+    const statusColorMap = {
+      'open': '#e74c3c',  // Red
+      'in_progress': '#f39c12',  // Orange
+      'resolved': '#2ecc71',  // Green
+    };
     
-    const validComplaints = complaintsData.filter(complaint => 
-      complaint && complaint.parsedLocation && 
-      complaint.parsedLocation.longitude && 
-      complaint.parsedLocation.latitude
-    );
+    const categoryName = complaint.categories?.name || 'Uncategorized';
+    const categoryIcon = getCategoryIcon(categoryName);
+    const statusColor = statusColorMap[complaint.status] || '#95a5a6';
     
-    console.log(`Found ${validComplaints.length} valid complaints out of ${complaintsData.length}`);
-    
-    if (validComplaints.length === 0) {
-      console.warn('No valid complaints with location data');
-      return;
-    }
-    
-    // Check if source exists, if not create it
-    if (!mapInstance.current.getSource('complaints')) {
-      console.log("Complaints source missing, re-creating it");
-      mapInstance.current.addSource('complaints', {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: []
-        },
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 50
-      });
-      
-      // Re-add the layers that use this source
-      setupSourcesAndLayers();
-    }
-    
-    // Now update the data
-// Update the date formatting in the updateMapData function
-
-// Now update the data
-const features = validComplaints.map(complaint => {
-  // Ensure proper date formatting
-  let formattedDate = 'Unknown';
-  if (complaint.created_at) {
-    try {
-      // Try to parse the date properly using ISO format first
-      const date = new Date(complaint.created_at);
-      if (!isNaN(date.getTime())) {
-        formattedDate = date.toLocaleDateString(undefined, {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        });
+    return {
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: complaint.coordinates
+      },
+      properties: {
+        id: complaint.id,
+        title: complaint.title || 'Untitled Complaint',
+        status: complaint.status || 'unknown',
+        category_id: complaint.category_id,
+        category_name: categoryName,
+        category_icon: categoryIcon,
+        color: statusColor,
+        created_at: complaint.created_at || '',
+        reported_by_name: complaint.reported_by_name || 'Unknown User',
+        anonymous: complaint.anonymous ? 'true' : 'false',
+        location_name: complaint.locationName || 'Loading location...' // Add the location name property
       }
-    } catch (err) {
-      console.warn('Error formatting date:', err);
-    }
-  }
+    };
+  });
   
-  return {
-    type: 'Feature',
-    geometry: {
-      type: 'Point',
-      coordinates: [complaint.parsedLocation.longitude, complaint.parsedLocation.latitude]
-    },
-    properties: {
-      id: complaint.id,
-      title: complaint.title || 'Untitled Complaint',
-      description: complaint.description || '',
-      status: complaint.status || 'open',
-      category_id: complaint.category_id,
-      category_name: complaint.categories?.name || 'Uncategorized',
-      category_icon: complaint.categories?.icon || '📍',
-      category_color: getCategoryColor(complaint.categories?.name),
-      reported_by: complaint.reported_by,
-      anonymous: complaint.anonymous,
-      created_at: formattedDate,
-      // Also store the raw date for filtering
-      created_at_raw: complaint.created_at,
-      updated_at: complaint.updated_at,
-      resolved_at: complaint.resolved_at,
-      priority: complaint.priority || 1,
-      // Store original coordinates for analysis functions
-      longitude: complaint.parsedLocation.longitude,
-      latitude: complaint.parsedLocation.latitude
-    }
-  };
-});
-
-    const geojson = {
+  // Update GeoJSON source
+  const source = mapInstance.current.getSource('complaints');
+  if (source) {
+    source.setData({
       type: 'FeatureCollection',
       features
-    };
-
-    try {
-      if (mapInstance.current.getSource('complaints')) {
-        mapInstance.current.getSource('complaints').setData(geojson);
-        console.log(`Updated map with ${features.length} complaints`);
-      } else {
-        console.error('Complaints source not found when trying to update data');
-      }
-    } catch (err) {
-      console.error('Error setting complaints data:', err);
-      // Attempt recovery
-      setTimeout(() => {
-        try {
-          if (mapInstance.current && mapInstance.current.getSource('complaints')) {
-            mapInstance.current.getSource('complaints').setData(geojson);
-            console.log('Successfully updated complaints data on retry');
-          }
-        } catch (retryErr) {
-          console.error('Retry failed:', retryErr);
-        }
-      }, 500);
-    }
-  } catch (error) {
-    console.error('Error updating map data:', error);
+    });
+    console.log(`Updated map with ${features.length} features`);
+  } else {
+    console.error('Complaints source not found on map');
   }
-};
+}, []);
   // Update department boundaries when they change
   useEffect(() => {
     if (mapInstance.current && sourcesInitialized && departments.length > 0) {
@@ -2295,6 +2423,11 @@ const setupEventHandlers = () => {
 // Update the popup display in the setupEventHandlers function
 
 // Mouse enter for individual complaints
+// Update the popup display in the setupEventHandlers function
+// Find the mouseenter event for unclustered-point and update it:
+
+// Mouse enter for individual complaints - updated popup content
+// Update the mouseenter event for unclustered-point
 mapInstance.current.on('mouseenter', 'unclustered-point', (e) => {
   try {
     if (!e.features || !e.features.length) return;
@@ -2304,11 +2437,27 @@ mapInstance.current.on('mouseenter', 'unclustered-point', (e) => {
     const coordinates = [...e.features[0].geometry.coordinates];
     const properties = e.features[0].properties;
     
+    // Format required properties with fallbacks for missing data
     const title = properties.title || 'Untitled Complaint';
     const status = properties.status || 'unknown';
     const categoryName = properties.category_name || 'Uncategorized';
     const categoryIcon = properties.category_icon || '📍';
-    const date = properties.created_at || 'Unknown date';
+    const locationName = properties.location_name || 'Loading location...';
+    
+    // Format date properly
+    let date = 'Unknown date';
+    if (properties.created_at) {
+      try {
+        date = new Date(properties.created_at).toLocaleDateString();
+      } catch (error) {
+        console.log('Error formatting date:', error);
+      }
+    }
+    
+    // Handle user information
+    const reportedBy = properties.anonymous === 'true' ? 
+      'Anonymous User' : 
+      (properties.reported_by_name || 'Registered User');
     
     // Ensure that if the map is zoomed out such that multiple copies of the feature are visible,
     // the popup appears over the copy being pointed to.
@@ -2318,17 +2467,24 @@ mapInstance.current.on('mouseenter', 'unclustered-point', (e) => {
     
     // Create popup with improved HTML content
     const statusColor = status === 'open' ? 'bg-red-100 text-red-800' :
-                        status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-green-100 text-green-800';
-                    
+                      status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-green-100 text-green-800';
+    
+    const formattedStatus = status === 'in_progress' ? 'In Progress' : 
+                        status.charAt(0).toUpperCase() + status.slice(1);
+                  
     const popupContent = `
       <div class="complaint-popup">
         <h4 class="popup-title text-sm font-semibold">${title}</h4>
         <div class="popup-info flex justify-between items-center mt-1">
           <span class="text-xs text-gray-600">${categoryIcon} ${categoryName}</span>
-          <span class="text-xs px-2 py-1 rounded-full ${statusColor}">${status.replace('_', ' ')}</span>
+          <span class="text-xs px-2 py-1 rounded-full ${statusColor}">${formattedStatus}</span>
+        </div>
+        <div class="popup-location text-xs text-gray-600 mt-1">
+          ${locationName}
         </div>
         <div class="popup-date text-xs text-gray-500 mt-1">Reported: ${date}</div>
+        <div class="popup-user text-xs text-gray-500">By: ${reportedBy}</div>
         <div class="popup-footer text-xs font-medium text-blue-600 mt-1">Click for details</div>
       </div>
     `;
@@ -2392,6 +2548,14 @@ mapInstance.current.on('click', 'unclustered-point', (e) => {
     
     const categoryMapping = categoryIcons[categoryName] || defaultCategoryIcon;
     return categoryMapping.color;
+  };
+  
+  // Helper function to get icon for category
+  const getCategoryIcon = (categoryName) => {
+    if (!categoryName) return defaultCategoryIcon.icon;
+    
+    const categoryMapping = categoryIcons[categoryName] || defaultCategoryIcon;
+    return categoryMapping.icon;
   };
 
   const addDepartmentBoundaries = (departments) => {

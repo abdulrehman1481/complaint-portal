@@ -63,11 +63,15 @@ export const getDepartmentId = (user) => {
   return user.department_id || null;
 };
 
-export default {
+const userPermissions = {
   canAccessAnalysisTools,
   isAdmin,
   isDepartmentAdmin,
   isSuperAdmin,
   isRegularUser,
-  getDepartmentId
+  getDepartmentId,
+  canViewDashboard: (user) => isAdmin(user) ,
+  canManageUsers: (user) => isAdmin(user),
 };
+
+export default userPermissions;

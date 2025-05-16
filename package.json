@@ -13,6 +13,8 @@
     "@turf/buffer": "^6.5.0",
     "@turf/turf": "^6.5.0",
     "axios": "^1.6.2",
+    "chart.js": "^4.4.9",
+    "chartjs-adapter-date-fns": "^3.0.0",
     "date-fns": "^2.30.0",
     "jquery": "^3.7.1",
     "leaflet": "^1.9.4",
@@ -27,7 +29,8 @@
     "react-leaflet-heatmap-layer-v3": "^3.0.3-beta-1",
     "react-router-dom": "^6.30.0",
     "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "recharts": "^2.5.0"
   },
   "scripts": {
     "start": "react-scripts start",
