@@ -1,5 +1,2 @@
 [build]
-  command = "npm install --legacy-peer-deps && npm run build"
-
-[build.environment]
-  NODE_VERSION = "16"
+  command = "npm install ajv --no-save && npm install --legacy-peer-deps && npm run build"

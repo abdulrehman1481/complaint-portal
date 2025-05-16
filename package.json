@@ -12,6 +12,7 @@
     "@testing-library/user-event": "^13.5.0",
     "@turf/buffer": "^6.5.0",
     "@turf/turf": "^6.5.0",
+    "ajv": "^8.17.1",
     "axios": "^1.6.2",
     "chart.js": "^4.4.9",
     "chartjs-adapter-date-fns": "^3.0.0",
@@ -29,8 +30,8 @@
     "react-leaflet-heatmap-layer-v3": "^3.0.3-beta-1",
     "react-router-dom": "^6.30.0",
     "react-scripts": "5.0.1",
-    "web-vitals": "^2.1.4",
-    "recharts": "^2.5.0"
+    "recharts": "^2.5.0",
+    "web-vitals": "^2.1.4"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -61,11 +62,9 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6"
   },
-
   "resolutions": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-error-overlay": "6.0.11"
   }
-
 }
