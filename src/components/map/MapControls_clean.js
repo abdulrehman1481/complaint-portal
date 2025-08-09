@@ -1,14 +1,14 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { 
   Settings, MapPin, Navigation, Target, Circle, Square, Grid, Zap,
-  Activity, BarChart3, Layers, Thermometer, Lock, Download, FileSpreadsheet 
+  Activity, BarChart3, Layers, Thermometer, Lock 
 } from 'lucide-react';
 import { 
   canAccessDrawingTools, 
-  canAccessSpatialAnalysis,
+  canAccessSpatialAnalysis, 
+  canAccessAnalysisTools,
   isAdmin 
 } from '../../utils/userPermissions';
-import { exportComplaintsToCSV, exportComplaintsToExcel } from '../../utils/exportUtils';
 
 const MapControls = ({ 
   userLocation, 
@@ -18,7 +18,7 @@ const MapControls = ({
   onQuickAction,
   user 
 }) => {
-  const [isDrawingMenuOpen, setIsDrawingMenuOpen] = useState(false); // Reset to closed by default
+  const [isDrawingMenuOpen, setIsDrawingMenuOpen] = useState(false);
   const [customNearbyRadius, setCustomNearbyRadius] = useState(500);
   const [customBufferDistance, setCustomBufferDistance] = useState(300);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -27,9 +27,6 @@ const MapControls = ({
   const userIsAdmin = useMemo(() => isAdmin(user), [user]);
   const hasDrawingAccess = useMemo(() => canAccessDrawingTools(user), [user]);
   const hasAnalysisAccess = useMemo(() => canAccessSpatialAnalysis(user), [user]);
-
-  // Debug logging (simplified)
-  console.log('MapControls:', { hasDrawingAccess, hasAnalysisAccess });
 
   const handleDrawingMode = useCallback(async (mode) => {
     if (!hasDrawingAccess) {
@@ -48,61 +45,6 @@ const MapControls = ({
     }
   }, [hasDrawingAccess, onDrawingModeChange]);
 
-  // Export functionality
-  const handleExportData = useCallback(async (format) => {
-    setIsProcessing(true);
-    try {
-      // Get complaints data from mapRef if available
-      let complaintsData = [];
-      if (mapRef?.current?.getAllComplaintData) {
-        complaintsData = mapRef.current.getAllComplaintData();
-      } else if (mapRef?.current?.getComplaintsData) {
-        complaintsData = mapRef.current.getComplaintsData();
-      } else if (mapRef?.current?.complaints) {
-        complaintsData = mapRef.current.complaints;
-      }
-
-      if (!complaintsData || complaintsData.length === 0) {
-        alert('No complaints data available to export. Please ensure the map has loaded.');
-        return;
-      }
-
-      const fileName = `complaints_export_${new Date().toISOString().split('T')[0]}`;
-      
-      if (format === 'csv') {
-        await exportComplaintsToCSV(complaintsData, fileName);
-        alert(`✅ Successfully exported ${complaintsData.length} complaints to CSV format.`);
-      } else if (format === 'excel') {
-        await exportComplaintsToExcel(complaintsData, fileName);
-        alert(`✅ Successfully exported ${complaintsData.length} complaints to Excel format.`);
-      }
-    } catch (error) {
-      console.error('Export error:', error);
-      alert('❌ Error exporting data: ' + (error.message || 'Please try again.'));
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [mapRef]);
-
-  // Quick action handler with export support
-  const handleQuickAction = useCallback(async (action, params = {}) => {
-    if (action.startsWith('export')) {
-      const format = action.replace('export', '').toLowerCase();
-      await handleExportData(format);
-      return;
-    }
-
-    setIsProcessing(true);
-    try {
-      await onQuickAction?.(action, params);
-    } catch (error) {
-      console.error('Quick action error:', error);
-      alert('Error performing action. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [onQuickAction, handleExportData]);
-
   const handleAnalysis = useCallback(async (type) => {
     if (!hasAnalysisAccess) {
       alert('Spatial analysis is restricted to administrators only.');
@@ -120,10 +62,35 @@ const MapControls = ({
     }
   }, [hasAnalysisAccess, onAnalysisRequest]);
 
+  const handleQuickAction = useCallback(async (action) => {
+    if (action === 'nearbyAnalysis' || action === 'bufferAnalysis' || action === 'toggleHeatMap' || action === 'clearAll') {
+      if (!hasAnalysisAccess) {
+        alert('This feature is restricted to administrators only.');
+        return;
+      }
+    }
+
+    setIsProcessing(true);
+    try {
+      if (action === 'nearbyAnalysis') {
+        await onQuickAction?.(action, { radius: customNearbyRadius });
+      } else if (action === 'bufferAnalysis') {
+        await onQuickAction?.(action, { distance: customBufferDistance });
+      } else {
+        await onQuickAction?.(action);
+      }
+    } catch (error) {
+      console.error('Quick action error:', error);
+      alert('Error performing action. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [hasAnalysisAccess, onQuickAction, customNearbyRadius, customBufferDistance]);
+
   // Show controls only for users with appropriate permissions
   if (!hasDrawingAccess && !hasAnalysisAccess) {
     return (
-      <div className="w-full max-w-xs">
+      <div className="absolute bottom-4 right-4 z-[800] max-w-xs">
         <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
           <div className="bg-gradient-to-r from-gray-500 to-gray-600 text-white p-3">
             <h3 className="text-sm font-bold flex items-center">
@@ -165,7 +132,7 @@ const MapControls = ({
 
   // Enhanced admin controls
   return (
-    <div className="w-full max-w-xs">
+    <div className="absolute bottom-4 right-4 z-[800] max-w-xs">
       <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-3">
@@ -366,33 +333,6 @@ const MapControls = ({
                   </button>
                 </>
               )}
-            </div>
-            
-            {/* Export Controls */}
-            <div className="mt-3">
-              <h5 className="text-xs font-semibold text-gray-600 mb-2 flex items-center">
-                <Download className="w-3 h-3 mr-1" />
-                Export Data
-              </h5>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => handleQuickAction('exportCsv')}
-                  disabled={isProcessing}
-                  className="px-2 py-1.5 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors disabled:opacity-50 flex items-center justify-center"
-                >
-                  <FileSpreadsheet className="w-3 h-3 mr-1" />
-                  CSV
-                </button>
-                
-                <button
-                  onClick={() => handleQuickAction('exportExcel')}
-                  disabled={isProcessing}
-                  className="px-2 py-1.5 bg-emerald-500 text-white text-xs rounded hover:bg-emerald-600 transition-colors disabled:opacity-50 flex items-center justify-center"
-                >
-                  <FileSpreadsheet className="w-3 h-3 mr-1" />
-                  Excel
-                </button>
-              </div>
             </div>
           </div>
         </div>

@@ -46,7 +46,7 @@ const NearbyComplaintsPanel = ({ info, onClose, onChangeRadius }) => {
   };
 
   return (
-    <div className="absolute bottom-6 left-6 w-80 bg-white rounded-lg shadow-lg z-30 overflow-hidden">
+    <div className="absolute bottom-6 left-6 w-80 bg-white rounded-lg shadow-lg z-[1100] overflow-hidden">
       <div className="bg-blue-600 text-white px-4 py-3 flex justify-between items-center">
         <h3 className="font-medium">Nearby Complaints ({count})</h3>
         <button onClick={onClose} className="text-white hover:text-blue-100">

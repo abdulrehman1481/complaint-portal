@@ -15,6 +15,40 @@ export const canAccessAnalysisTools = (user) => {
 };
 
 /**
+ * Check if user can access drawing tools
+ * @param {Object} user - User object with roles
+ * @returns {boolean} - Whether user has access to drawing tools
+ */
+export const canAccessDrawingTools = (user) => {
+  if (!user || !user.roles) return false;
+  
+  // TEMPORARY: Allow all users to access drawing tools for testing
+  // TODO: Revert to admin-only after testing
+  return true;
+  
+  // Original admin-only logic:
+  // const adminRoles = ['Super Admin', 'Department Admin'];
+  // return adminRoles.includes(user.roles.name);
+};
+
+/**
+ * Check if user can access spatial analysis
+ * @param {Object} user - User object with roles
+ * @returns {boolean} - Whether user has access to spatial analysis
+ */
+export const canAccessSpatialAnalysis = (user) => {
+  if (!user || !user.roles) return false;
+  
+  // TEMPORARY: Allow all users to access spatial analysis for testing
+  // TODO: Revert to admin-only after testing
+  return true;
+  
+  // Original admin-only logic:
+  // const adminRoles = ['Super Admin', 'Department Admin'];
+  // return adminRoles.includes(user.roles.name);
+};
+
+/**
  * Check if user is admin level (Super Admin or Department Admin)
  * @param {Object} user - User object with roles
  * @returns {boolean} - Whether user is admin

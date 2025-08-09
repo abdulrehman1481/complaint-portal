@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import { useNavigate } from 'react-router-dom';
 import { 
   User, 
@@ -18,13 +18,24 @@ import {
   BarChart2,
   Bell
 } from 'lucide-react';
+import { getDashboardPath } from '../utils/roleBasedRouting';
 import { supabase } from '../supabaseClient';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+
+// Fix for default markers in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+  iconUrl: require('leaflet/dist/images/marker-icon.png'),
+  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
 
 const UserDashboard = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [complaints, setComplaints] = useState([]);
+  const [nearbyComplaints, setNearbyComplaints] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
   const [stats, setStats] = useState({
     total: 0,
     open: 0,
@@ -42,7 +53,105 @@ const UserDashboard = () => {
   useEffect(() => {
     fetchUserData();
     fetchCommunityStats();
+    getCurrentUserLocation();
   }, []);
+
+  const getCurrentUserLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const location = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setUserLocation(location);
+          fetchNearbyComplaints(location);
+        },
+        (error) => {
+          console.error('Error getting location:', error);
+        }
+      );
+    }
+  };
+
+  const fetchNearbyComplaints = async (location) => {
+    try {
+      // Try to use the PostGIS function first
+      try {
+        const { data, error } = await supabase.rpc('get_nearby_complaints_for_users', {
+          user_lat: location.lat,
+          user_lng: location.lng,
+          radius_km: 10
+        });
+
+        if (error) throw error;
+        setNearbyComplaints(data || []);
+        return;
+      } catch (rpcError) {
+        console.warn('PostGIS function not available, falling back to basic query:', rpcError);
+      }
+
+      // Fallback: fetch recent public complaints and calculate distance client-side
+      const { data: complaints, error } = await supabase
+        .from('complaints')
+        .select(`
+          *,
+          categories (id, name, icon, severity_level)
+        `)
+        .eq('anonymous', false)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      // Calculate distances on the client side
+      const complaintsWithDistance = complaints.map(complaint => {
+        let lat = null, lng = null;
+        
+        if (complaint.location) {
+          if (typeof complaint.location === 'string') {
+            const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
+            if (pointMatch && pointMatch.length >= 3) {
+              lng = parseFloat(pointMatch[1]);
+              lat = parseFloat(pointMatch[2]);
+            }
+          } else if (typeof complaint.location === 'object' && complaint.location.coordinates) {
+            [lng, lat] = complaint.location.coordinates;
+          }
+        }
+        
+        let distance = null;
+        if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+          // Simple distance calculation (Haversine formula)
+          const R = 6371; // Earth's radius in km  
+          const dLat = (lat - location.lat) * Math.PI / 180;
+          const dLng = (lng - location.lng) * Math.PI / 180;
+          const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(location.lat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *
+                    Math.sin(dLng/2) * Math.sin(dLng/2);
+          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+          distance = R * c;
+        }
+        
+        return {
+          ...complaint,
+          distance: distance
+        };
+      });
+
+      // Filter by distance (within 10km) and sort by distance
+      const nearbyFiltered = complaintsWithDistance
+        .filter(c => c.distance !== null && c.distance <= 10)
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 10); // Limit to 10 nearby complaints
+
+      setNearbyComplaints(nearbyFiltered);
+      
+    } catch (error) {
+      console.error('Error fetching nearby complaints:', error);
+      setNearbyComplaints([]);
+    }
+  };
 
   useEffect(() => {
     if (mapContainerRef.current) {
@@ -117,11 +226,38 @@ const UserDashboard = () => {
 
   const fetchCommunityStats = async () => {
     try {
-      const { data: categories, error: categoryError } = await supabase
-        .rpc('get_complaints_by_category')
-        .limit(5);
-      
-      if (categoryError) throw categoryError;
+      // Try to use the RPC function first
+      let categories = [];
+      try {
+        const { data: categoryData, error: categoryError } = await supabase
+          .rpc('get_complaints_by_category', { limit_count: 5 });
+        
+        if (categoryError) throw categoryError;
+        categories = categoryData || [];
+      } catch (rpcError) {
+        console.warn('RPC function not available, falling back to basic query:', rpcError);
+        
+        // Fallback: get categories with complaint counts
+        const { data: categoryData, error: categoryError } = await supabase
+          .from('categories')
+          .select(`
+            id,
+            name,
+            icon,
+            complaints (id)
+          `)
+          .eq('is_active', true)
+          .limit(5);
+          
+        if (categoryError) throw categoryError;
+        
+        categories = (categoryData || []).map(cat => ({
+          category_id: cat.id,
+          category_name: cat.name,
+          category_icon: cat.icon,
+          complaint_count: cat.complaints?.length || 0
+        })).filter(cat => cat.complaint_count > 0);
+      }
       
       const statusData = [
         { name: 'Open', value: 0, color: '#EF4444' },
@@ -129,24 +265,25 @@ const UserDashboard = () => {
         { name: 'Resolved', value: 0, color: '#10B981' }
       ];
       
-      const { data: openCount } = await supabase
+      // Use count queries properly
+      const { count: openCount } = await supabase
         .from('complaints')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'open');
         
-      const { data: inProgressCount } = await supabase
+      const { count: inProgressCount } = await supabase
         .from('complaints')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'in_progress');
         
-      const { data: resolvedCount } = await supabase
+      const { count: resolvedCount } = await supabase
         .from('complaints')
         .select('*', { count: 'exact', head: true })
         .eq('status', 'resolved');
       
-      statusData[0].value = openCount?.length || 0;
-      statusData[1].value = inProgressCount?.length || 0;
-      statusData[2].value = resolvedCount?.length || 0;
+      statusData[0].value = openCount || 0;
+      statusData[1].value = inProgressCount || 0;
+      statusData[2].value = resolvedCount || 0;
       
       setCommunityStats({
         categories: categories || [],
@@ -155,6 +292,15 @@ const UserDashboard = () => {
       
     } catch (error) {
       console.error('Error fetching community stats:', error);
+      // Set fallback empty data
+      setCommunityStats({
+        categories: [],
+        statusDistribution: [
+          { name: 'Open', value: 0, color: '#EF4444' },
+          { name: 'In Progress', value: 0, color: '#F59E0B' },
+          { name: 'Resolved', value: 0, color: '#10B981' }
+        ]
+      });
     }
   };
 
@@ -171,9 +317,7 @@ const UserDashboard = () => {
     navigate('/map');
   };
 
-  const initializeMapPreview = () => {
-    const MAPBOX_TOKEN = process.env.REACT_APP_MAPBOX_TOKEN || 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
-    
+  const initializeMapPreview = async () => {
     if (!mapContainerRef.current) return;
     
     try {
@@ -182,95 +326,92 @@ const UserDashboard = () => {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
       }
+
+      // Create Leaflet map
+      const map = L.map(mapContainerRef.current).setView([40, -74.5], 9);
       
-      mapboxgl.accessToken = MAPBOX_TOKEN;
-      
-      const map = new mapboxgl.Map({
-        container: mapContainerRef.current,
-        style: 'mapbox://styles/mapbox/streets-v11',
-        center: [-74.5, 40],
-        zoom: 9,
-        interactive: true
-      });
-      
-      map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+      // Add tile layer
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
       
       mapInstanceRef.current = map;
       
-      map.on('load', async () => {
-        console.log('Map preview loaded');
+      // Process complaints and add markers
+      let centerPoint = null;
+      let validComplaints = complaints.filter(complaint => 
+        complaint.location && typeof complaint.location === 'object'
+      );
+      
+      if (validComplaints.length > 0) {
+        const points = validComplaints
+          .map(complaint => {
+            if (complaint.location.latitude && complaint.location.longitude) {
+              return [complaint.location.longitude, complaint.location.latitude];
+            } else if (complaint.location.lng && complaint.location.lat) {
+              return [complaint.location.lng, complaint.location.lat];
+            } else if (complaint.coordinates && complaint.coordinates.length === 2) {
+              return complaint.coordinates;
+            }
+            return null;
+          })
+          .filter(point => point !== null);
         
-        let centerPoint = null;
-        let validComplaints = complaints.filter(complaint => 
-          complaint.location && typeof complaint.location === 'object'
-        );
-        
-        if (validComplaints.length > 0) {
-          const points = validComplaints
-            .map(complaint => {
-              if (complaint.location.latitude && complaint.location.longitude) {
-                return [complaint.location.longitude, complaint.location.latitude];
-              } else if (complaint.location.lng && complaint.location.lat) {
-                return [complaint.location.lng, complaint.location.lat];
-              } else if (complaint.coordinates && complaint.coordinates.length === 2) {
-                return complaint.coordinates;
-              }
-              return null;
-            })
-            .filter(point => point !== null);
+        if (points.length > 0) {
+          const center = points.reduce(
+            (acc, point) => {
+              return [acc[0] + point[0]/points.length, acc[1] + point[1]/points.length];
+            },
+            [0, 0]
+          );
           
-          if (points.length > 0) {
-            const center = points.reduce(
-              (acc, point) => {
-                return [acc[0] + point[0]/points.length, acc[1] + point[1]/points.length];
-              },
-              [0, 0]
-            );
-            
-            centerPoint = center;
-            
-            points.forEach(point => {
-              try {
-                new mapboxgl.Marker({ color: '#3498db' })
-                  .setLngLat(point)
-                  .addTo(map);
-              } catch (e) {
-                console.warn('Error adding marker:', e);
-              }
-            });
-          }
-        }
-        
-        if (!centerPoint) {
-          try {
-            const position = await new Promise((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(resolve, reject, {
-                enableHighAccuracy: true,
-                timeout: 5000,
-                maximumAge: 0
-              });
-            });
-            
-            centerPoint = [position.coords.longitude, position.coords.latitude];
-            
-            new mapboxgl.Marker({ color: '#e67e22' })
-              .setLngLat(centerPoint)
-              .addTo(map);
-            
-          } catch (error) {
-            console.warn('Could not get user location:', error);
-            centerPoint = [-74.5, 40];
-          }
-        }
-        
-        if (centerPoint) {
-          map.flyTo({
-            center: centerPoint,
-            zoom: 11.5,
-            essential: true
+          centerPoint = center;
+          
+          points.forEach(point => {
+            try {
+              // Convert to [lat, lng] for Leaflet
+              L.marker([point[1], point[0]]).addTo(map);
+            } catch (e) {
+              console.warn('Error adding marker:', e);
+            }
           });
         }
-      });
+      }
+      
+      // Get user location if no complaints
+      if (!centerPoint) {
+        try {
+          const position = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 5000,
+              maximumAge: 0
+            });
+          });
+          
+          centerPoint = [position.coords.longitude, position.coords.latitude];
+          
+          // Add user location marker (orange)
+          const orangeIcon = L.divIcon({
+            className: 'custom-marker',
+            html: '<div style="background-color: #e67e22; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white;"></div>',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+          });
+          
+          L.marker([centerPoint[1], centerPoint[0]], { icon: orangeIcon }).addTo(map);
+          
+        } catch (error) {
+          console.warn('Could not get user location:', error);
+          centerPoint = [-74.5, 40];
+        }
+      }
+      
+      if (centerPoint) {
+        // Convert to [lat, lng] for Leaflet setView
+        map.setView([centerPoint[1], centerPoint[0]], 11.5);
+      }
+      
     } catch (error) {
       console.error('Error initializing map preview:', error);
     }
@@ -307,6 +448,18 @@ const UserDashboard = () => {
               </div>
             </div>
             <div className="flex items-center">
+              {/* Role-specific dashboard link */}
+              {user?.roles?.name !== 'Public User' && (
+                <button
+                  onClick={() => navigate(getDashboardPath(user?.roles?.name))}
+                  className="mr-4 inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  {user?.roles?.name === 'Super Admin' && 'Admin Panel'}
+                  {user?.roles?.name === 'Department Admin' && 'Department Dashboard'}
+                  {user?.roles?.name === 'Field Agent' && 'Field Dashboard'}
+                </button>
+              )}
               <div className="relative">
                 <button className="p-1 rounded-full text-gray-500 hover:text-gray-600 focus:outline-none">
                   <Bell className="h-6 w-6" />
@@ -508,6 +661,58 @@ const UserDashboard = () => {
                 </ul>
               </div>
             </div>
+
+            {/* Nearby Community Issues Section */}
+            {nearbyComplaints.length > 0 && (
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium leading-6 text-gray-900">Nearby Community Issues</h3>
+                  <span className="text-sm text-gray-500">Within 10km of your location</span>
+                </div>
+                <div className="bg-white shadow overflow-hidden sm:rounded-md">
+                  <ul className="divide-y divide-gray-200">
+                    {nearbyComplaints.slice(0, 5).map((complaint) => (
+                      <li key={complaint.id}>
+                        <div className="px-4 py-4 sm:px-6 hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/complaint/${complaint.id}`)}>
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium text-blue-600 truncate">
+                              {complaint.title}
+                            </p>
+                            <div className="ml-2 flex-shrink-0 flex items-center space-x-2">
+                              {complaint.distance && (
+                                <span className="text-xs text-gray-500">
+                                  {complaint.distance < 1 ? 
+                                    `${Math.round(complaint.distance * 1000)}m` : 
+                                    `${complaint.distance.toFixed(1)}km`} away
+                                </span>
+                              )}
+                              <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full
+                                ${complaint.status === 'open' ? 'bg-red-100 text-red-800' : 
+                                  complaint.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' : 
+                                  'bg-green-100 text-green-800'}`}>
+                                {complaint.status === 'in_progress' ? 'In Progress' : 
+                                  complaint.status.charAt(0).toUpperCase() + complaint.status.slice(1)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="mt-2 flex justify-between">
+                            <div className="sm:flex">
+                              <p className="flex items-center text-sm text-gray-500">
+                                {complaint.categories?.icon || complaint.category_icon || '📍'} {complaint.categories?.name || complaint.category_name || 'General'}
+                              </p>
+                              <p className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 sm:ml-6">
+                                <Calendar className="flex-shrink-0 mr-1.5 h-4 w-4 text-gray-400" />
+                                {formatDate(complaint.created_at)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
 
             <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-2">
               <div className="bg-white shadow sm:rounded-lg">

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import '../styles/complaint-detail-map.css';
 import { supabase } from '../supabaseClient';
 import { 
   AlertTriangle, 
@@ -17,11 +18,18 @@ import {
   Edit,
   Send,
   Loader,
-  Map as MapIcon
+  Map as MapIcon,
+  Building
 } from 'lucide-react';
 import { parseLocation, formatLocationForDisplay } from '../utils/locationFormatter';
 
-const MAPBOX_TOKEN = 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
+// Fix for default markers in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+  iconUrl: require('leaflet/dist/images/marker-icon.png'),
+  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
 
 const ComplaintDetail = () => {
   const { id } = useParams();
@@ -35,9 +43,108 @@ const ComplaintDetail = () => {
   const [comment, setComment] = useState('');
   const [comments, setComments] = useState([]);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [fieldAgents, setFieldAgents] = useState([]);
+  const [departments, setDepartments] = useState([]);
 
   const mapContainer = useRef(null);
   const map = useRef(null);
+
+  const fetchComments = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('complaint_comments')
+        .select(`
+          *,
+          user:user_id (
+            first_name,
+            last_name,
+            roles(name)
+          )
+        `)
+        .eq('complaint_id', id)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      setComments(data || []);
+    } catch (error) {
+      console.error('Error fetching comments:', error);
+    }
+  };
+
+  const fetchFieldAgents = async (departmentId = null) => {
+    try {
+      // Use the department from the complaint if not provided
+      const targetDepartmentId = departmentId || complaint?.department_id;
+      
+      // Build the query step by step to avoid issues
+      let query = supabase
+        .from('users')
+        .select(`
+          id,
+          first_name,
+          last_name,
+          email,
+          official_position,
+          department_id,
+          role_id,
+          roles!inner(name)
+        `);
+      
+      // First filter by role
+      query = query.eq('roles.name', 'Field Agent');
+      
+      // Then filter by department if we have one
+      if (targetDepartmentId) {
+        query = query.eq('department_id', targetDepartmentId);
+      }
+
+      // Execute the query (no active column filtering to avoid errors)
+      const { data, error } = await query;
+      
+      if (error) {
+        console.error('Error fetching field agents:', error);
+        throw error;
+      }
+      
+      console.log('Fetched field agents:', data);
+      setFieldAgents(data || []);
+      
+    } catch (error) {
+      console.error('Error fetching field agents:', error);
+      setFieldAgents([]);
+    }
+  };
+
+  const fetchDepartments = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('id, name')
+        .order('name');
+
+      if (error) throw error;
+      setDepartments(data || []);
+    } catch (error) {
+      console.error('Error fetching departments:', error);
+    }
+  };
+
+  const calculateResolutionTime = (createdAt, resolvedAt) => {
+    const diffInMs = resolvedAt.getTime() - createdAt.getTime();
+    const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60));
+    const diffInDays = Math.floor(diffInHours / 24);
+    
+    if (diffInDays > 0) {
+      const remainingHours = diffInHours % 24;
+      return remainingHours > 0 ? `${diffInDays}d ${remainingHours}h` : `${diffInDays}d`;
+    } else if (diffInHours > 0) {
+      const remainingMinutes = Math.floor((diffInMs % (1000 * 60 * 60)) / (1000 * 60));
+      return remainingMinutes > 0 ? `${diffInHours}h ${remainingMinutes}m` : `${diffInHours}h`;
+    } else {
+      const minutes = Math.floor(diffInMs / (1000 * 60));
+      return `${minutes}m`;
+    }
+  };
 
   useEffect(() => {
     const fetchComplaintAndUser = async () => {
@@ -70,6 +177,13 @@ const ComplaintDetail = () => {
         await fetchComplaintDetails(id);
         await fetchComments();
         
+        // Fetch field agents and departments if user is admin
+        if (userData.roles?.name === 'Super Admin' || 
+            userData.roles?.name === 'Department Admin') {
+          await fetchDepartments();
+          // fetchFieldAgents will be called after complaint is loaded to filter by department
+        }
+        
       } catch (error) {
         console.error('Error loading data:', error);
         setError('Failed to load complaint details. Please try again later.');
@@ -80,6 +194,13 @@ const ComplaintDetail = () => {
     
     fetchComplaintAndUser();
   }, [id, navigate]);
+
+  // Fetch field agents when complaint is loaded (to filter by department)
+  useEffect(() => {
+    if (complaint && user && (user.roles?.name === 'Super Admin' || user.roles?.name === 'Department Admin')) {
+      fetchFieldAgents(complaint.department_id);
+    }
+  }, [complaint?.department_id, user?.roles?.name]);
 
   useEffect(() => {
     if (complaint && mapContainer.current && !map.current) {
@@ -94,286 +215,571 @@ const ComplaintDetail = () => {
     };
   }, [complaint, mapContainer.current]);
 
+  // Reinitialize map when status changes to update marker color
+  useEffect(() => {
+    if (complaint && map.current) {
+      // Update marker color based on new status
+      const marker = Object.values(map.current._layers).find(layer => layer instanceof L.Marker);
+      if (marker) {
+        const colors = {
+          'open': '#ef4444',
+          'in_progress': '#f59e0b', 
+          'resolved': '#10b981'
+        };
+        
+        const newIcon = L.divIcon({
+          className: 'custom-complaint-marker',
+          html: `
+            <div style="
+              background-color: ${colors[complaint.status] || colors.open};
+              width: 30px;
+              height: 30px;
+              border-radius: 50%;
+              border: 3px solid white;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              color: white;
+              font-weight: bold;
+              font-size: 12px;
+            ">
+              📍
+            </div>
+          `,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        });
+        
+        marker.setIcon(newIcon);
+        
+        // Update popup content
+        const lat = marker.getLatLng().lat;
+        const lng = marker.getLatLng().lng;
+        const popupContent = `
+          <div style="min-width: 200px;">
+            <h3 style="margin: 0 0 8px 0; font-size: 14px; font-weight: bold;">${complaint.title || 'Complaint'}</h3>
+            ${complaint.locationName ? `<p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Location: ${complaint.locationName}</p>` : ''}
+            <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Status: <span style="font-weight: bold; color: ${colors[complaint.status] || colors.open};">${complaint.status?.replace('_', ' ').toUpperCase()}</span></p>
+            <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Category: ${complaint.categories?.name || 'Unknown'}</p>
+            <p style="margin: 0; font-size: 11px; color: #888;">Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}</p>
+          </div>
+        `;
+        marker.setPopupContent(popupContent);
+      }
+    }
+  }, [complaint?.status]);
+
   const initializeMap = () => {
-    if (!complaint) return;
+    if (!complaint || !mapContainer.current) return;
+    
+    // Clean up existing map
+    if (map.current) {
+      map.current.remove();
+      map.current = null;
+    }
     
     let lat = null, lng = null;
     
-    if (complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude) {
-      lat = complaint.parsedLocation.latitude;
-      lng = complaint.parsedLocation.longitude;
-    } else if (complaint.location) {
-      if (typeof complaint.location === 'string') {
-        const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
-        if (pointMatch && pointMatch.length >= 3) {
-          lng = parseFloat(pointMatch[1]);
-          lat = parseFloat(pointMatch[2]);
-        }
-      } else if (typeof complaint.location === 'object') {
-        if (complaint.location.latitude !== undefined && complaint.location.longitude !== undefined) {
-          lat = complaint.location.latitude;
-          lng = complaint.location.longitude;
-        } else if (complaint.location.lat !== undefined && complaint.location.lng !== undefined) {
-          lat = complaint.location.lat;
-          lng = complaint.location.lng;
-        } else if (complaint.location.coordinates && Array.isArray(complaint.location.coordinates)) {
-          [lng, lat] = complaint.location.coordinates;
-        }
-      }
-    } else if (complaint.coordinates && Array.isArray(complaint.coordinates)) {
-      [lng, lat] = complaint.coordinates;
-    }
-    
-    if (!lat || !lng || isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
-      console.warn('Invalid coordinates:', lat, lng);
-      return;
-    }
-    
+    // Enhanced location parsing with better error handling
     try {
-      mapboxgl.accessToken = MAPBOX_TOKEN;
-      
-      map.current = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/streets-v11',
-        center: [lng, lat],
-        zoom: 15,
-        interactive: true
+      console.log('Parsing location from complaint:', { 
+        parsedLocation: complaint.parsedLocation, 
+        location: complaint.location,
+        coordinates: complaint.coordinates 
       });
       
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      // First try the parsedLocation
+      if (complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude) {
+        lat = parseFloat(complaint.parsedLocation.latitude);
+        lng = parseFloat(complaint.parsedLocation.longitude);
+        console.log('Using parsedLocation:', { lat, lng });
+      } 
+      // Fallback to original location parsing
+      else if (complaint.location) {
+        if (typeof complaint.location === 'string') {
+          // Handle PostGIS POINT format
+          const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.?\d*)\s+([-+]?\d+\.?\d*)\s*\)/i);
+          if (pointMatch && pointMatch.length >= 3) {
+            lng = parseFloat(pointMatch[1]);
+            lat = parseFloat(pointMatch[2]);
+            console.log('Parsed from POINT string:', { lat, lng });
+          }
+        } else if (typeof complaint.location === 'object' && complaint.location !== null) {
+          // Handle GeoJSON format
+          if (complaint.location.type === 'Point' && Array.isArray(complaint.location.coordinates)) {
+            [lng, lat] = complaint.location.coordinates.map(coord => parseFloat(coord));
+            console.log('Parsed from GeoJSON:', { lat, lng });
+          }
+          // Handle object properties
+          else if (complaint.location.latitude !== undefined && complaint.location.longitude !== undefined) {
+            lat = parseFloat(complaint.location.latitude);
+            lng = parseFloat(complaint.location.longitude);
+            console.log('Parsed from lat/lng object:', { lat, lng });
+          } else if (complaint.location.lat !== undefined && complaint.location.lng !== undefined) {
+            lat = parseFloat(complaint.location.lat);
+            lng = parseFloat(complaint.location.lng);
+            console.log('Parsed from lat/lng properties:', { lat, lng });
+          } else if (Array.isArray(complaint.location.coordinates)) {
+            [lng, lat] = complaint.location.coordinates.map(coord => parseFloat(coord));
+            console.log('Parsed from coordinates array:', { lat, lng });
+          }
+        }
+      } 
+      // Additional fallbacks
+      else if (complaint.coordinates && Array.isArray(complaint.coordinates)) {
+        [lng, lat] = complaint.coordinates.map(coord => parseFloat(coord));
+        console.log('Parsed from direct coordinates:', { lat, lng });
+      }
+      // Check for direct lat/lng properties
+      else if (complaint.latitude !== undefined && complaint.longitude !== undefined) {
+        lat = parseFloat(complaint.latitude);
+        lng = parseFloat(complaint.longitude);
+        console.log('Using direct lat/lng properties:', { lat, lng });
+      }
       
-      new mapboxgl.Marker({ color: '#e74c3c' })
-        .setLngLat([lng, lat])
-        .addTo(map.current);
+      // Validate coordinates
+      if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+        console.warn('Invalid or missing coordinates:', { 
+          lat, lng, 
+          latType: typeof lat, 
+          lngType: typeof lng,
+          originalLocation: complaint.location 
+        });
+        
+        // Show error message in map container
+        if (mapContainer.current) {
+          mapContainer.current.innerHTML = `
+            <div style="
+              display: flex; 
+              align-items: center; 
+              justify-content: center; 
+              height: 100%; 
+              background-color: #f3f4f6; 
+              color: #6b7280; 
+              text-align: center;
+              padding: 20px;
+            ">
+              <div>
+                <svg style="width: 48px; height: 48px; margin: 0 auto 16px;" fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
+                </svg>
+                <p style="margin: 0; font-size: 14px;">Location data not available</p>
+                <p style="margin: 8px 0 0; font-size: 12px;">The complaint location could not be displayed on the map.</p>
+              </div>
+            </div>
+          `;
+        }
+        return;
+      }
       
+      if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+        console.warn('Coordinates out of valid range:', { lat, lng });
+        return;
+      }
+      
+      console.log('Successfully parsed coordinates:', { lat, lng });
+      
+      // Create Leaflet map with better options
+      map.current = L.map(mapContainer.current, {
+        center: [lat, lng],
+        zoom: 16,
+        zoomControl: true,
+        scrollWheelZoom: true,
+        doubleClickZoom: true,
+        dragging: true
+      });
+      
+      // Add multiple tile layer options for better coverage
+      const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+      });
+      
+      const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri © Maxar',
+        maxZoom: 19
+      });
+      
+      // Add default layer
+      osmLayer.addTo(map.current);
+      
+      // Add layer control
+      const baseLayers = {
+        "Street Map": osmLayer,
+        "Satellite": satelliteLayer
+      };
+      L.control.layers(baseLayers).addTo(map.current);
+      
+      // Create custom marker icon based on complaint status
+      const getMarkerIcon = (status) => {
+        const colors = {
+          'open': '#ef4444', // red
+          'in_progress': '#f59e0b', // amber
+          'resolved': '#10b981' // green
+        };
+        
+        return L.divIcon({
+          className: 'custom-complaint-marker',
+          html: `
+            <div style="
+              background-color: ${colors[status] || colors.open};
+              width: 30px;
+              height: 30px;
+              border-radius: 50%;
+              border: 3px solid white;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              color: white;
+              font-weight: bold;
+              font-size: 12px;
+            ">
+              📍
+            </div>
+          `,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        });
+      };
+      
+      // Add marker with custom icon
+      const marker = L.marker([lat, lng], {
+        icon: getMarkerIcon(complaint.status)
+      }).addTo(map.current);
+      
+      // Add popup with complaint info
+      const popupContent = `
+        <div style="min-width: 200px;">
+          <h3 style="margin: 0 0 8px 0; font-size: 14px; font-weight: bold;">${complaint.title || 'Complaint'}</h3>
+          <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Status: <span style="font-weight: bold; color: ${complaint.status === 'resolved' ? '#10b981' : complaint.status === 'in_progress' ? '#f59e0b' : '#ef4444'};">${complaint.status?.replace('_', ' ').toUpperCase()}</span></p>
+          <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Category: ${complaint.categories?.name || 'Unknown'}</p>
+          <p style="margin: 0; font-size: 11px; color: #888;">Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}</p>
+        </div>
+      `;
+      
+      marker.bindPopup(popupContent);
+      
+      // Get location name if not available
       if (!complaint.locationName) {
-        fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${MAPBOX_TOKEN}`)
+        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+          headers: {
+            'User-Agent': 'ComplaintManagementSystem/1.0'
+          }
+        })
           .then(response => response.json())
           .then(data => {
-            if (data && data.features && data.features.length > 0) {
-              const locationName = data.features[0].place_name;
+            if (data && data.display_name) {
               setComplaint(prev => ({
                 ...prev,
-                locationName
+                locationName: data.display_name
               }));
+              
+              // Update popup with location name
+              const updatedPopupContent = `
+                <div style="min-width: 200px;">
+                  <h3 style="margin: 0 0 8px 0; font-size: 14px; font-weight: bold;">${complaint.title || 'Complaint'}</h3>
+                  <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Location: ${data.display_name}</p>
+                  <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Status: <span style="font-weight: bold; color: ${complaint.status === 'resolved' ? '#10b981' : complaint.status === 'in_progress' ? '#f59e0b' : '#ef4444'};">${complaint.status?.replace('_', ' ').toUpperCase()}</span></p>
+                  <p style="margin: 0 0 4px 0; font-size: 12px; color: #666;">Category: ${complaint.categories?.name || 'Unknown'}</p>
+                  <p style="margin: 0; font-size: 11px; color: #888;">Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}</p>
+                </div>
+              `;
+              marker.setPopupContent(updatedPopupContent);
             }
           })
-          .catch(err => console.error('Error getting location name:', err));
+          .catch(err => console.warn('Error getting location name:', err));
       }
+      
+      // Fit map to show the marker with some padding
+      setTimeout(() => {
+        if (map.current) {
+          map.current.setView([lat, lng], 16);
+        }
+      }, 100);
+      
     } catch (error) {
       console.error('Error initializing map:', error);
+      
+      // Show error message in map container
+      if (mapContainer.current) {
+        mapContainer.current.innerHTML = `
+          <div style="
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            height: 100%; 
+            background-color: #f3f4f6; 
+            color: #ef4444; 
+            text-align: center;
+            padding: 20px;
+          ">
+            <div>
+              <svg style="width: 48px; height: 48px; margin: 0 auto 16px;" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+              </svg>
+              <p style="margin: 0; font-size: 14px;">Map initialization failed</p>
+              <p style="margin: 8px 0 0; font-size: 12px;">Unable to display the location map.</p>
+            </div>
+          </div>
+        `;
+      }
     }
   };
 
   const fetchComplaintDetails = async (id) => {
     try {
-      // First fetch the complaint with just the categories to avoid the join error
+      console.log('Fetching complaint details for ID:', id);
+      
+      // Fetch the complaint with all related data
       const { data: comp, error: compErr } = await supabase
         .from('complaints')
-        .select('*, categories(*)')
+        .select(`
+          *, 
+          categories (id, name, icon, severity_level, response_time),
+          departments (id, name, contact_email),
+          reporter:users!complaints_reported_by_fkey (id, first_name, last_name, email, phone_number),
+          assignee:users!complaints_assigned_to_fkey (id, first_name, last_name, email, official_position, roles(name))
+        `)
         .eq('id', id)
         .single();
         
-      if (compErr) throw compErr;
-
-      // Fetch department details separately if department_id exists
-      let departmentData = null;
-      if (comp.department_id) {
-        const { data: dept } = await supabase
-          .from('departments')
-          .select('*')
-          .eq('id', comp.department_id)
-          .single();
-        departmentData = dept;
+      if (compErr) {
+        console.error('Error fetching complaint:', compErr);
+        throw compErr;
       }
 
-      // Continue with existing user fetching code
+      console.log('Fetched complaint data:', comp);
+
+      // Parse the complaint data and set additional fields
       let reported = null;
-      if (comp.reported_by && !comp.anonymous) {
-        const { data: ru } = await supabase
-          .from('users')
-          .select('id,first_name,last_name')
-          .eq('id', comp.reported_by)
-          .single();
-        reported = ru;
-      }
-      
       let assigned = null;
-      if (comp.assigned_to) {
-        const { data: au } = await supabase
-          .from('users')
-          .select('id,first_name,last_name,roles(name)')  // Remove avatar_url since it doesn't exist
-          .eq('id', comp.assigned_to)
-          .single();
-        assigned = au;
+
+      if (comp.reporter && !comp.anonymous) {
+        reported = comp.reporter;
       }
-      
-      // Fetch available departments for assignment
-      const { data: departments } = await supabase
-        .from('departments')
-        .select('id,name')
-        .order('name');
+
+      if (comp.assignee) {
+        assigned = comp.assignee;
+      }
+
+      // Fetch available departments for assignment (if user is admin)
+      let availableDepartments = [];
+      if (user && (user.roles?.name === 'Super Admin' || user.roles?.name === 'Department Admin')) {
+        const { data: departments } = await supabase
+          .from('departments')
+          .select('id, name')
+          .eq('is_active', true)
+          .order('name');
+        availableDepartments = departments || [];
+      }
 
       const imageUrls = (comp.images || []).map(path =>
         supabase.storage.from('complaint-images').getPublicUrl(path).data.publicUrl
       );
-      
-      const locationData = parseComplaintLocation(comp);
+
+      // Parse location data properly
+      const parsedLocation = parseComplaintLocation(comp);
 
       const enhancedComplaint = {
         ...comp,
         reported_by_user: reported,
         assigned_to_user: assigned,
-        departments: departmentData, // Use the separately fetched department data
-        parsedLocation: locationData,
+        parsedLocation: parsedLocation,
         imageUrls,
         resolutionTime: comp.resolved_at && comp.created_at ? 
           calculateResolutionTime(new Date(comp.created_at), new Date(comp.resolved_at)) : null,
-        availableDepartments: departments || []
+        availableDepartments
       };
-      
+
       setComplaint(enhancedComplaint);
       
-    } catch (err) {
-      console.error('Fetch complaint error:', err);
-      setError('Error loading complaint details. Please try again later.');
+    } catch (error) {
+      console.error('Error in fetchComplaintDetails:', error);
+      setError(error.message || 'Failed to fetch complaint details');
     }
   };
 
   const parseComplaintLocation = (comp) => {
-    if (typeof parseLocation === 'function') {
-      const parsedLoc = parseLocation(comp.location);
-      if (parsedLoc && parsedLoc.latitude && parsedLoc.longitude) {
-        return parsedLoc;
-      }
-    }
+    // Enhanced location parsing to handle multiple formats
+    let locationData = null;
     
-    if (comp.location) {
-      if (typeof comp.location === 'object' && comp.location.type === 'Point' && 
-          Array.isArray(comp.location.coordinates) && comp.location.coordinates.length === 2) {
-        const [longitude, latitude] = comp.location.coordinates;
-        return { latitude, longitude };
-      }
+    try {
+      console.log('Parsing location from complaint:', { location: comp.location, lat: comp.latitude, lng: comp.longitude });
       
-      if (typeof comp.location === 'object' && 
-          (comp.location.latitude !== undefined && comp.location.longitude !== undefined)) {
-        return {
-          latitude: comp.location.latitude,
-          longitude: comp.location.longitude
-        };
-      }
-      
-      if (typeof comp.location === 'object' && 
-          (comp.location.lat !== undefined && comp.location.lng !== undefined)) {
-        return {
-          latitude: comp.location.lat,
-          longitude: comp.location.lng
-        };
-      }
-      
-      if (typeof comp.location === 'string') {
-        const pointMatch = comp.location.match(/POINT\s*\(\s*([-+]?\d+\.\d+)\s+([-+]?\d+\.\d+)\s*\)/i);
-        if (pointMatch && pointMatch.length >= 3) {
-          return {
-            longitude: parseFloat(pointMatch[1]),
-            latitude: parseFloat(pointMatch[2])
-          };
+      // Try using the utility function first
+      if (comp.location && typeof comp.location === 'string') {
+        try {
+          locationData = parseLocation(comp.location);
+          if (locationData && locationData.latitude && locationData.longitude) {
+            console.log('Successfully parsed with utility function:', locationData);
+            return locationData;
+          }
+        } catch (utilError) {
+          console.warn('Utility function failed, trying manual parsing:', utilError);
         }
       }
+      
+      if (comp.location) {
+        // Handle PostGIS Point format (string)
+        if (typeof comp.location === 'string') {
+          // Format: "POINT(longitude latitude)"
+          const pointMatch = comp.location.match(/POINT\s*\(\s*([-+]?\d+\.?\d*)\s+([-+]?\d+\.?\d*)\s*\)/i);
+          if (pointMatch && pointMatch.length >= 3) {
+            const longitude = parseFloat(pointMatch[1]);
+            const latitude = parseFloat(pointMatch[2]);
+            if (!isNaN(latitude) && !isNaN(longitude)) {
+              locationData = { latitude, longitude };
+            }
+          }
+        }
+        // Handle GeoJSON Point format
+        else if (typeof comp.location === 'object' && comp.location.type === 'Point' && 
+                 Array.isArray(comp.location.coordinates) && comp.location.coordinates.length === 2) {
+          const [longitude, latitude] = comp.location.coordinates.map(coord => parseFloat(coord));
+          if (!isNaN(latitude) && !isNaN(longitude)) {
+            locationData = { latitude, longitude };
+          }
+        }
+        // Handle object with latitude/longitude properties
+        else if (typeof comp.location === 'object') {
+          if (comp.location.latitude !== undefined && comp.location.longitude !== undefined) {
+            const latitude = parseFloat(comp.location.latitude);
+            const longitude = parseFloat(comp.location.longitude);
+            if (!isNaN(latitude) && !isNaN(longitude)) {
+              locationData = { latitude, longitude };
+            }
+          } else if (comp.location.lat !== undefined && comp.location.lng !== undefined) {
+            const latitude = parseFloat(comp.location.lat);
+            const longitude = parseFloat(comp.location.lng);
+            if (!isNaN(latitude) && !isNaN(longitude)) {
+              locationData = { latitude, longitude };
+            }
+          }
+        }
+      } 
+      // Handle direct latitude/longitude properties on complaint
+      else if (comp.latitude !== undefined && comp.longitude !== undefined) {
+        const latitude = parseFloat(comp.latitude);
+        const longitude = parseFloat(comp.longitude);
+        if (!isNaN(latitude) && !isNaN(longitude)) {
+          locationData = { latitude, longitude };
+        }
+      }
+      
+      // Validate coordinates are within valid ranges
+      if (locationData) {
+        const { latitude, longitude } = locationData;
+        if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) {
+          console.warn('Invalid coordinates detected:', locationData);
+          locationData = null;
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error parsing location data:', error);
+      locationData = null;
     }
     
-    if (comp.latitude !== undefined && comp.longitude !== undefined) {
-      return {
-        latitude: comp.latitude,
-        longitude: comp.longitude
-      };
-    }
-    
-    if (comp.coordinates && Array.isArray(comp.coordinates) && comp.coordinates.length === 2) {
-      return {
-        longitude: comp.coordinates[0],
-        latitude: comp.coordinates[1]
-      };
-    }
-    
-    return null;
+    console.log('Parsed location data:', { original: comp.location, parsed: locationData });
+    return locationData;
   };
 
-  const calculateResolutionTime = (createdDate, resolvedDate) => {
-    const diffMs = resolvedDate - createdDate;
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    
-    if (diffDays > 0) {
-      return `${diffDays} day${diffDays !== 1 ? 's' : ''} and ${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
-    }
-    return `${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
-  };
-
-  const fetchComments = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('complaint_comments')
-        .select('*, user:user_id(id,first_name,last_name)')  // Remove avatar_url since it doesn't exist
-        .eq('complaint_id', id)
-        .order('created_at', { ascending: true });
-        
-      if (error) throw error;
-      setComments(data || []);
-    } catch (err) {
-      console.error('Fetch comments error:', err);
-      setError('Failed to load comments. Please refresh and try again.');
-    }
-  };
-
+  // Fix: Move status update logic into a function
   const handleStatusChange = async (newStatus) => {
+    if (statusUpdating) return;
+
     try {
       setStatusUpdating(true);
       
-      const updates = { 
-        status: newStatus,
-        updated_at: new Date().toISOString()
-      };
+      console.log('Attempting to update status to:', newStatus, 'for complaint ID:', complaint.id);
       
-      if (newStatus === 'resolved') {
-        updates.resolved_at = new Date().toISOString();
-      } else if (newStatus === 'open' && complaint.resolved_at) {
-        updates.resolved_at = null;
+      // Try using RPC function first (most reliable)
+      try {
+        console.log('Attempting RPC function update...');
+        const { data, error } = await supabase.rpc('simple_update_complaint_status', {
+          complaint_id_param: parseInt(complaint.id),
+          new_status: newStatus
+        });
+        
+        if (error) {
+          console.warn('RPC function failed:', error);
+          throw error;
+        }
+        
+        console.log('RPC function update successful:', data);
+        
+      } catch (rpcError) {
+        console.warn('RPC failed, trying direct update:', rpcError);
+        
+        // Fallback to direct update with minimal fields
+        const updates = { 
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        };
+        
+        if (newStatus === 'resolved') {
+          updates.resolved_at = new Date().toISOString();
+        } else if (newStatus === 'open') {
+          updates.resolved_at = null;
+        }
+        
+        console.log('Direct update payload:', updates);
+        
+        // Use simple update without select to avoid column issues
+        const { error: directError } = await supabase
+          .from('complaints')
+          .update(updates)
+          .eq('id', parseInt(complaint.id));
+        
+        if (directError) {
+          console.error('Direct update failed:', {
+            error: directError,
+            code: directError.code,
+            message: directError.message,
+            details: directError.details,
+            hint: directError.hint
+          });
+          throw directError;
+        }
+        
+        console.log('Direct update successful');
       }
       
-      // Update the complaint status in the complaints table
-      const { error } = await supabase
-        .from('complaints')
-        .update(updates)
-        .eq('id', parseInt(complaint.id));
-      
-      if (error) {
-        console.error('Supabase update error details:', error);
-        throw error;
-      }
-      
-      // Record status change in complaint_history table
-      const { error: historyError } = await supabase
-        .from('complaint_history')
-        .insert({
+      // Try to record status change in complaint_history table (optional)
+      try {
+        const historyData = {
           complaint_id: parseInt(complaint.id),
           status: newStatus,
           changed_by: user.id,
           notes: `Status changed to ${getStatusText(newStatus)}`,
           created_at: new Date().toISOString()
-        });
-      
-      if (historyError) {
-        console.error('Error recording history:', historyError);
-        // Continue even if history recording fails
+        };
+        
+        console.log('Adding history record:', historyData);
+        
+        const { error: historyError } = await supabase
+          .from('complaint_history')
+          .insert(historyData);
+        
+        if (historyError) {
+          console.warn('Error recording history (non-critical):', historyError);
+        } else {
+          console.log('History recorded successfully');
+        }
+      } catch (historyError) {
+        console.warn('History recording failed (non-critical):', historyError);
       }
       
+      // Update local state
       setComplaint(prev => {
+        const currentTime = new Date().toISOString();
         const updated = {
           ...prev,
           status: newStatus,
-          updated_at: updates.updated_at,
-          resolved_at: updates.resolved_at
+          updated_at: currentTime,
+          resolved_at: newStatus === 'resolved' ? currentTime : (newStatus === 'open' ? null : prev.resolved_at)
         };
         
         if (newStatus === 'resolved' && updated.created_at) {
@@ -388,11 +794,47 @@ const ComplaintDetail = () => {
         return updated;
       });
       
-      await addSystemComment(`Status changed to ${getStatusText(newStatus)}`);
+      // Try to add system comment (optional)
+      try {
+        await addSystemComment(`Status changed to ${getStatusText(newStatus)}`);
+      } catch (commentError) {
+        console.warn('Failed to add system comment (non-critical):', commentError);
+      }
+      
+      // Refresh the complaint data from the database to ensure consistency
+      try {
+        await fetchComplaintDetails(complaint.id);
+        await fetchComments(); // Refresh comments to show new system comment
+      } catch (refreshError) {
+        console.warn('Failed to refresh complaint data (non-critical):', refreshError);
+      }
+      
+      alert(`Status successfully updated to ${getStatusText(newStatus)}`);
       
     } catch (error) {
       console.error('Error updating status:', error);
-      alert(`Failed to update status: ${error.message || 'Please try again.'}`);
+      let errorMessage = 'Please try again.';
+      
+      // Handle specific error types
+      if (error.message && (
+        error.message.includes('column "active" does not exist') ||
+        error.code === '42703'
+      )) {
+        errorMessage = 'Database schema issue detected. Please run the database fix script.';
+        console.error('Active column missing. Run fix_active_column_issue.sql script.');
+      } else if (error.message && (
+        error.message.includes('function') ||
+        error.message.includes('does not exist') ||
+        error.message.includes('permission denied') ||
+        error.message.includes('RLS')
+      )) {
+        errorMessage = 'Database configuration issue. Please run the database fix script or contact administrator.';
+        console.error('Database function or permission issue. Run the database fix script.');
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      alert(`Failed to update status: ${errorMessage}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -406,18 +848,36 @@ const ComplaintDetail = () => {
       const previousStatus = complaint.status;
       const newStatus = complaint.status === 'open' ? 'in_progress' : complaint.status;
       
-      const updates = { 
-        assigned_to: user.id,
-        status: newStatus,
-        updated_at: new Date().toISOString()
-      };
-      
-      const { error } = await supabase
-        .from('complaints')
-        .update(updates)
-        .eq('id', parseInt(complaint.id));
-      
-      if (error) throw error;
+      // Try using RPC function first
+      try {
+        const { data, error } = await supabase.rpc('safe_update_complaint', {
+          complaint_id_param: parseInt(complaint.id),
+          status_param: newStatus,
+          assigned_to_param: user.id,
+          updated_at_param: new Date().toISOString()
+        });
+
+        if (error) throw error;
+        
+        console.log('Assignment updated via RPC:', data);
+        
+      } catch (rpcError) {
+        console.warn('RPC assignment failed, trying direct update:', rpcError);
+        
+        // Fallback to direct update
+        const updates = { 
+          assigned_to: user.id,
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        };
+        
+        const { error } = await supabase
+          .from('complaints')
+          .update(updates)
+          .eq('id', parseInt(complaint.id));
+        
+        if (error) throw error;
+      }
       
       // If status changed, record in history
       if (previousStatus !== newStatus) {
@@ -438,6 +898,7 @@ const ComplaintDetail = () => {
       
       await addSystemComment(`Complaint assigned to ${user.first_name} ${user.last_name}`);
       
+      // Update local state
       setComplaint(prev => ({
         ...prev,
         assigned_to: user.id,
@@ -445,9 +906,170 @@ const ComplaintDetail = () => {
         status: newStatus
       }));
       
+      // Refresh the complaint data from the database to ensure consistency
+      try {
+        await fetchComplaintDetails(complaint.id);
+        await fetchComments(); // Refresh comments to show new system comment
+      } catch (refreshError) {
+        console.warn('Failed to refresh complaint data (non-critical):', refreshError);
+      }
+      
     } catch (error) {
       console.error('Error assigning complaint:', error);
-      alert(`Failed to assign complaint: ${error.message || 'Please try again.'}`);
+      let errorMessage = 'Please try again.';
+      
+      // Handle specific error types
+      if (error.message && error.message.includes('column "active" does not exist')) {
+        errorMessage = 'Database configuration issue. Please run the database fix script.';
+        console.error('Active column missing in assignment operation.');
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      alert(`Failed to assign complaint: ${errorMessage}`);
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
+  const handleAssignToFieldAgent = async (agentId) => {
+    try {
+      if (!agentId) return;
+      
+      setStatusUpdating(true);
+      
+      const selectedAgent = fieldAgents.find(agent => agent.id === agentId);
+      if (!selectedAgent) {
+        throw new Error('Selected field agent not found');
+      }
+
+      console.log('Attempting to assign agent:', selectedAgent, 'to complaint ID:', complaint.id);
+
+      // Update original status if needed
+      const previousStatus = complaint.status;
+      const newStatus = complaint.status === 'open' ? 'in_progress' : complaint.status;
+      
+      // Try RPC function first
+      try {
+        console.log('Attempting RPC function assignment...');
+        const { data, error } = await supabase.rpc('safe_update_complaint', {
+          complaint_id_param: parseInt(complaint.id),
+          status_param: newStatus,
+          assigned_to_param: agentId
+        });
+        
+        if (error) {
+          console.warn('RPC assignment failed:', error);
+          throw error;
+        }
+        
+        console.log('RPC assignment successful:', data);
+        
+      } catch (rpcError) {
+        console.warn('RPC failed, trying direct assignment:', rpcError);
+        
+        // Fallback to direct update without select to avoid column issues
+        const updates = { 
+          assigned_to: agentId,
+          status: newStatus,
+          updated_at: new Date().toISOString()
+        };
+        
+        console.log('Direct assignment payload:', updates);
+        
+        const { error: directError } = await supabase
+          .from('complaints')
+          .update(updates)
+          .eq('id', parseInt(complaint.id));
+        
+        if (directError) {
+          console.error('Direct assignment error details:', {
+            error: directError,
+            code: directError.code,
+            message: directError.message,
+            details: directError.details,
+            hint: directError.hint
+          });
+          throw directError;
+        }
+        
+        console.log('Direct assignment successful');
+      }
+      
+      // Try to record assignment in complaint_history for tracking (optional)
+      try {
+        const historyData = {
+          complaint_id: parseInt(complaint.id),
+          status: newStatus,
+          changed_by: user.id,
+          notes: `Assigned to field agent ${selectedAgent.first_name} ${selectedAgent.last_name}`,
+          created_at: new Date().toISOString()
+        };
+        
+        console.log('Adding assignment history:', historyData);
+        
+        const { error: historyError } = await supabase
+          .from('complaint_history')
+          .insert(historyData);
+        
+        if (historyError) {
+          console.warn('Error recording assignment history (non-critical):', historyError);
+        } else {
+          console.log('Assignment history recorded successfully');
+        }
+      } catch (historyError) {
+        console.warn('Assignment history recording failed (non-critical):', historyError);
+      }
+      
+      // Try to add system comment (optional)
+      try {
+        await addSystemComment(`Complaint assigned to field agent ${selectedAgent.first_name} ${selectedAgent.last_name}`);
+      } catch (commentError) {
+        console.warn('Failed to add assignment comment (non-critical):', commentError);
+      }
+      
+      // Update local state
+      setComplaint(prev => ({
+        ...prev,
+        assigned_to: agentId,
+        assigned_to_user: selectedAgent,
+        status: newStatus
+      }));
+      
+      // Refresh the complaint data from the database to ensure consistency
+      try {
+        await fetchComplaintDetails(complaint.id);
+        await fetchComments(); // Refresh comments to show new system comment
+      } catch (refreshError) {
+        console.warn('Failed to refresh complaint data (non-critical):', refreshError);
+      }
+      
+      alert(`Successfully assigned complaint to ${selectedAgent.first_name} ${selectedAgent.last_name}`);
+      
+    } catch (error) {
+      console.error('Error assigning complaint to field agent:', error);
+      let errorMessage = 'Please try again.';
+      
+      // Handle specific error types  
+      if (error.message && (
+        error.message.includes('column "active" does not exist') ||
+        error.code === '42703'
+      )) {
+        errorMessage = 'Database schema issue detected. Please run the database fix script.';
+        console.error('Active column missing in field agent assignment. Run fix_active_column_issue.sql script.');
+      } else if (error.message && (
+        error.message.includes('function') ||
+        error.message.includes('does not exist') ||
+        error.message.includes('permission denied') ||
+        error.message.includes('RLS')
+      )) {
+        errorMessage = 'Database configuration issue. Please run the database fix script or contact administrator.';
+        console.error('Database function or permission issue in field agent assignment.');
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      alert(`Failed to assign complaint: ${errorMessage}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -496,11 +1118,25 @@ const ComplaintDetail = () => {
       
       await addSystemComment(`Complaint assigned to ${departmentName} department`);
       
+      // Update local state
       setComplaint(prev => ({
         ...prev,
         department_id: parseInt(departmentId),
         departments: { ...prev.departments, id: parseInt(departmentId), name: departmentName }
       }));
+      
+      // Refresh the complaint data from the database to ensure consistency
+      try {
+        await fetchComplaintDetails(complaint.id);
+        await fetchComments(); // Refresh comments to show new system comment
+        
+        // Also refresh field agents for the new department
+        if (user && (user.roles?.name === 'Super Admin' || user.roles?.name === 'Department Admin')) {
+          await fetchFieldAgents(parseInt(departmentId));
+        }
+      } catch (refreshError) {
+        console.warn('Failed to refresh complaint data (non-critical):', refreshError);
+      }
       
     } catch (error) {
       console.error('Error assigning complaint to department:', error);
@@ -515,17 +1151,23 @@ const ComplaintDetail = () => {
       const { error } = await supabase
         .from('complaint_comments')
         .insert([{
-          complaint_id: id,
+          complaint_id: parseInt(id),
           user_id: null,
           content: message,
-          is_system: true
+          is_system: true,
+          is_internal: false,
+          created_at: new Date().toISOString()
         }]);
         
-      if (error) throw error;
+      if (error) {
+        console.warn('Error adding system comment (non-critical):', error);
+        return; // Don't throw, just return
+      }
       
       await fetchComments();
     } catch (error) {
-      console.error('Error adding system comment:', error);
+      console.warn('Error adding system comment (non-critical):', error);
+      // Don't throw the error, just log it as it's not critical
     }
   };
 
@@ -540,26 +1182,31 @@ const ComplaintDetail = () => {
       const { error } = await supabase
         .from('complaint_comments')
         .insert([{
-          complaint_id: id,
+          complaint_id: parseInt(id),
           user_id: user.id,
           content: comment.trim(),
-          is_system: false
+          is_system: false,
+          is_internal: false,
+          created_at: new Date().toISOString()
         }]);
       
-      if (error) throw error;
+      if (error) {
+        console.error('Error adding comment:', error);
+        throw error;
+      }
       
       setComment('');
       await fetchComments();
       
-      const commentsSection = document.getElementById('comments-section');
-      if (commentsSection) {
-        setTimeout(() => {
-          commentsSection.scrollTop = commentsSection.scrollHeight;
-        }, 100);
-      }
     } catch (error) {
       console.error('Error submitting comment:', error);
-      alert('Failed to submit comment. Please try again.');
+      let errorMessage = 'Failed to add comment. Please try again.';
+      
+      if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      alert(errorMessage);
     } finally {
       setCommenting(false);
     }
@@ -709,6 +1356,16 @@ const ComplaintDetail = () => {
                         <span>Uncategorized</span>
                       )}
                     </div>
+                    <div className="flex items-center">
+                      <Building className="h-4 w-4 mr-2 text-gray-400" />
+                      {complaint.departments ? (
+                        <span>
+                          Department: {complaint.departments.name}
+                        </span>
+                      ) : (
+                        <span>No department assigned</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -748,24 +1405,113 @@ const ComplaintDetail = () => {
                 <div className="mb-6">
                   <h2 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
                     <MapIcon className="h-5 w-5 mr-2 text-gray-500" />
-                    Location
+                    Location Details
                   </h2>
-                  {complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude ? (
-                    <div>
-                      <div ref={mapContainer} className="bg-gray-100 h-64 rounded-lg"></div>
-                      <div className="mt-2">
-                        {complaint.locationName ? (
-                          <p className="text-sm font-medium text-gray-700">{complaint.locationName}</p>
-                        ) : null}
-                        <p className="text-sm text-gray-500">
-                          Latitude: {complaint.parsedLocation.latitude.toFixed(6)}, Longitude: {complaint.parsedLocation.longitude.toFixed(6)}
-                        </p>
+                  
+                  {/* Map Container with improved styling */}
+                  <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                    <div 
+                      ref={mapContainer} 
+                      className="bg-gray-100 h-80 w-full relative"
+                      style={{ minHeight: '320px' }}
+                    >
+                      {/* Loading overlay */}
+                      {!map.current && (
+                        <div className="absolute inset-0 bg-gray-50 flex items-center justify-center z-10">
+                          <div className="text-center">
+                            <MapIcon className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                            <p className="text-sm text-gray-500">Loading map...</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Location Information Panel */}
+                    <div className="bg-white px-4 py-3 border-t border-gray-200">
+                      <div className="space-y-2">
+                        {/* Location Name */}
+                        {complaint.locationName && (
+                          <div className="flex items-start">
+                            <MapPin className="h-4 w-4 text-blue-500 mt-0.5 mr-2 flex-shrink-0" />
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">Address</p>
+                              <p className="text-sm text-gray-600">{complaint.locationName}</p>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Coordinates */}
+                        {complaint.parsedLocation && complaint.parsedLocation.latitude && complaint.parsedLocation.longitude && (
+                          <div className="flex items-start">
+                            <div className="h-4 w-4 mr-2 mt-0.5 flex-shrink-0">
+                              <svg className="h-4 w-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                              </svg>
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">Coordinates</p>
+                              <p className="text-sm text-gray-600 font-mono">
+                                {complaint.parsedLocation.latitude.toFixed(6)}, {complaint.parsedLocation.longitude.toFixed(6)}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {/* Status indicator */}
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="flex items-center text-xs text-gray-500">
+                            <div className={`w-2 h-2 rounded-full mr-2 ${
+                              complaint.status === 'resolved' ? 'bg-green-500' : 
+                              complaint.status === 'in_progress' ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}></div>
+                            Location Status: Active
+                          </div>
+                          
+                          {/* Quick action buttons */}
+                          <div className="flex space-x-1">
+                            {complaint.parsedLocation && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    const { latitude, longitude } = complaint.parsedLocation;
+                                    window.open(`https://www.google.com/maps?q=${latitude},${longitude}`, '_blank');
+                                  }}
+                                  className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 rounded hover:bg-blue-50"
+                                >
+                                  Open in Google Maps
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (map.current) {
+                                      map.current.setView([complaint.parsedLocation.latitude, complaint.parsedLocation.longitude], 18);
+                                    }
+                                  }}
+                                  className="text-xs text-green-600 hover:text-green-800 px-2 py-1 rounded hover:bg-green-50"
+                                >
+                                  Zoom In
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  ) : (
-                    <div className="bg-gray-100 h-64 rounded-lg flex items-center justify-center">
-                      <MapPin className="h-8 w-8 text-red-500" />
-                      <p className="ml-2 text-gray-500">Location data not available</p>
+                  </div>
+                  
+                  {/* Fallback for when location is not available */}
+                  {(!complaint.parsedLocation || !complaint.parsedLocation.latitude || !complaint.parsedLocation.longitude) && (
+                    <div className="border border-gray-200 rounded-lg p-8 text-center bg-gray-50">
+                      <MapPin className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">Location Not Available</h3>
+                      <p className="text-gray-500 mb-4">
+                        The location data for this complaint is not available or could not be parsed.
+                      </p>
+                      {complaint.description && (
+                        <p className="text-sm text-gray-600">
+                          Please check the complaint description for any location details provided by the reporter.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -879,20 +1625,56 @@ const ComplaintDetail = () => {
                           )}
                         </div>
                       ) : (
-                        <button
-                          onClick={handleAssignToMe}
-                          disabled={statusUpdating}
-                          className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                        >
-                          {statusUpdating ? (
-                            <>
-                              <Loader className="h-4 w-4 mr-2 animate-spin" />
-                              Assigning...
-                            </>
-                          ) : (
-                            'Assign to me'
+                        <div className="space-y-3">
+                          {/* Assign to me button for field agents */}
+                          <button
+                            onClick={handleAssignToMe}
+                            disabled={statusUpdating}
+                            className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                          >
+                            {statusUpdating ? (
+                              <>
+                                <Loader className="h-4 w-4 mr-2 animate-spin" />
+                                Assigning...
+                              </>
+                            ) : (
+                              'Assign to me'
+                            )}
+                          </button>
+
+                          {/* Assign to field agent dropdown for admins */}
+                          {(user.roles?.name === 'Super Admin' || user.roles?.name === 'Department Admin') && fieldAgents.length > 0 && (
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Or assign to field agent:
+                                {complaint.department_id && (
+                                  <span className="text-xs text-gray-500 ml-1">
+                                    (Department agents only)
+                                  </span>
+                                )}
+                              </label>
+                              <select
+                                onChange={(e) => e.target.value && handleAssignToFieldAgent(e.target.value)}
+                                disabled={statusUpdating}
+                                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                defaultValue=""
+                              >
+                                <option value="">Select field agent...</option>
+                                {fieldAgents.map(agent => (
+                                  <option key={agent.id} value={agent.id}>
+                                    {agent.first_name} {agent.last_name}
+                                    {agent.official_position && ` (${agent.official_position})`}
+                                    {agent.department_id && ` - Dept: ${agent.department_id}`}
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {fieldAgents.length} field agent{fieldAgents.length !== 1 ? 's' : ''} available
+                                {complaint.department_id ? ` in department ${complaint.department_id}` : ' (all departments)'}
+                              </p>
+                            </div>
                           )}
-                        </button>
+                        </div>
                       )}
                     </div>
                     
@@ -923,7 +1705,7 @@ const ComplaintDetail = () => {
                           className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
                         >
                           <option value="">Select a department</option>
-                          {complaint.availableDepartments?.map(dept => (
+                          {departments.map(dept => (
                             <option key={dept.id} value={dept.id}>
                               {dept.name}
                             </option>
@@ -993,13 +1775,16 @@ const ComplaintDetail = () => {
                       )}
                     </div>
                     
-                    <button 
-                      className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                      onClick={() => navigate(`/edit-complaint/${complaint.id}`)}
-                    >
-                      <Edit className="h-5 w-5 mr-2" />
-                      Edit Complaint
-                    </button>
+                    {/* Edit button - only show for complaint reporter or admins */}
+                    {(complaint.reported_by === user.id || isAdmin) && (
+                      <button 
+                        className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        onClick={() => navigate(`/edit-complaint/${complaint.id}`)}
+                      >
+                        <Edit className="h-5 w-5 mr-2" />
+                        Edit Complaint
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1041,10 +1826,6 @@ const ComplaintDetail = () => {
                           </span>
                         </div>
                       </div>
-                    )}
-                    
-                    {complaint.categories.description && (
-                      <p className="text-sm text-gray-600 mt-2">{complaint.categories.description}</p>
                     )}
                     
                     {complaint.category_id && !complaint.categories.name && (

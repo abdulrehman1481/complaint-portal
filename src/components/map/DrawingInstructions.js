@@ -40,7 +40,7 @@ const DrawingInstructions = ({ isActive, mode, instructions }) => {
   };
 
   return (
-    <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-20">
+    <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-[1100]">
       <div className="bg-white px-4 py-2 rounded-lg shadow-lg border border-blue-200 flex items-center">
         {getIcon()}
         <div>

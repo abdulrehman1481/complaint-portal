@@ -17,8 +17,17 @@ import {
 } from 'lucide-react';
 // Ensure date-fns adapter is properly imported
 import 'chartjs-adapter-date-fns';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'leaflet.heat';
+
+// Fix for default markers in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+  iconUrl: require('leaflet/dist/images/marker-icon.png'),
+  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
 
 // Update refs initialization
 const Analytics = () => {
@@ -436,16 +445,9 @@ const Analytics = () => {
   };
   
   const initializeMap = (locations) => {
-    if (!mapboxgl.supported()) {
-      console.error('Mapbox GL not supported in this browser');
-      return;
-    }
-    
     if (mapInstance.current) {
       mapInstance.current.remove();
     }
-    
-    mapboxgl.accessToken = process.env.REACT_APP_MAPBOX_TOKEN || 'pk.your_mapbox_token_here';
     
     // Find center point based on all locations
     const center = locations.reduce(
@@ -458,76 +460,31 @@ const Analytics = () => {
       { lat: 0, lng: 0 }
     );
     
-    const map = new mapboxgl.Map({
-      container: mapContainerRef.current,
-      style: 'mapbox://styles/mapbox/light-v10',
-      center: [center.lng, center.lat],
-      zoom: 10
-    });
+    // Create Leaflet map
+    const map = L.map(mapContainerRef.current).setView([center.lat, center.lng], 10);
     
-    map.on('load', () => {
-      // Add heat map source and layer
-      map.addSource('complaints', {
-        'type': 'geojson',
-        'data': {
-          'type': 'FeatureCollection',
-          'features': locations.map(loc => ({
-            'type': 'Feature',
-            'geometry': {
-              'type': 'Point',
-              'coordinates': [loc.longitude, loc.latitude]
-            }
-          }))
-        }
-      });
-      
-      map.addLayer({
-        'id': 'complaints-heat',
-        'type': 'heatmap',
-        'source': 'complaints',
-        'maxzoom': 15,
-        'paint': {
-          // Increase weight as diameter increases
-          'heatmap-weight': 1,
-          // Increase intensity as zoom level increases
-          'heatmap-intensity': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            0, 1,
-            15, 3
-          ],
-          // Color heatmap based on density
-          'heatmap-color': [
-            'interpolate',
-            ['linear'],
-            ['heatmap-density'],
-            0, 'rgba(33,102,172,0)',
-            0.2, 'rgb(103,169,207)',
-            0.4, 'rgb(209,229,240)',
-            0.6, 'rgb(253,219,199)',
-            0.8, 'rgb(239,138,98)',
-            1, 'rgb(178,24,43)'
-          ],
-          // Adjust the heatmap radius
-          'heatmap-radius': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            0, 2,
-            9, 20
-          ],
-          // Decrease opacity as zoom increases
-          'heatmap-opacity': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            7, 1,
-            15, 0.5
-          ],
-        }
-      });
-    });
+    // Add tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    
+    // Create heatmap data
+    const heatmapData = locations.map(loc => [loc.latitude, loc.longitude, 1]);
+    
+    // Add heatmap layer
+    const heatLayer = L.heatLayer(heatmapData, {
+      radius: 20,
+      blur: 15,
+      maxZoom: 15,
+      gradient: {
+        0.0: 'rgba(33,102,172,0)',
+        0.2: 'rgb(103,169,207)',
+        0.4: 'rgb(209,229,240)', 
+        0.6: 'rgb(253,219,199)',
+        0.8: 'rgb(239,138,98)',
+        1.0: 'rgb(178,24,43)'
+      }
+    }).addTo(map);
     
     mapInstance.current = map;
   };

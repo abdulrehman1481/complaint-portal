@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import $ from 'jquery'; // Import jQuery
 import { toWKT } from '../utils/locationFormatter';
 import { 
@@ -20,7 +20,13 @@ import {
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
-const MAPBOX_TOKEN = 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
+// Fix for default markers in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+  iconUrl: require('leaflet/dist/images/marker-icon.png'),
+  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
 
 const ReportComplaint = () => {
   const navigate = useNavigate();
@@ -71,7 +77,7 @@ const ReportComplaint = () => {
         
         const { data: categoriesData, error: categoriesError } = await supabase
           .from('categories')
-          .select('id, name, icon, severity_level')
+          .select('id, name, icon, severity_level, default_department_id')
           .eq('is_active', true)
           .order('name');
           
@@ -126,8 +132,6 @@ const ReportComplaint = () => {
     if (map.current || !mapContainer.current) return;
     
     try {
-      mapboxgl.accessToken = MAPBOX_TOKEN;
-      
       const $container = $(mapContainer.current);
       if ($container.length === 0) {
         console.error('Map container not found in the DOM');
@@ -138,89 +142,67 @@ const ReportComplaint = () => {
         console.warn('Map container has zero width or height');
       }
       
-      map.current = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/streets-v11',
-        center: [formData.location.longitude || -74.0060, formData.location.latitude || 40.7128],
-        zoom: formData.location.longitude ? 15 : 10
-      });
+      map.current = L.map(mapContainer.current).setView(
+        [formData.location.latitude || 40.7128, formData.location.longitude || -74.0060], 
+        formData.location.longitude ? 15 : 10
+      );
       
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-      
-      const geolocateControl = new mapboxgl.GeolocateControl({
-        positionOptions: {
-          enableHighAccuracy: true
-        },
-        trackUserLocation: true
-      });
-      
-      map.current.addControl(geolocateControl, 'top-right');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map.current);
       
       if (formData.location.latitude && formData.location.longitude) {
-        marker.current = new mapboxgl.Marker({ draggable: true })
-          .setLngLat([formData.location.longitude, formData.location.latitude])
-          .addTo(map.current);
+        marker.current = L.marker([formData.location.latitude, formData.location.longitude], {
+          draggable: true
+        }).addTo(map.current);
         
-        marker.current.on('dragend', () => {
-          const lngLat = marker.current.getLngLat();
-          updateLocation(lngLat.lat, lngLat.lng);
+        marker.current.on('dragend', (e) => {
+          const { lat, lng } = e.target.getLatLng();
+          updateLocation(lat, lng);
         });
       }
       
       map.current.on('click', (e) => {
-        const { lng, lat } = e.lngLat;
+        const { lat, lng } = e.latlng;
         
         if (!marker.current) {
-          marker.current = new mapboxgl.Marker({ draggable: true })
-            .setLngLat([lng, lat])
-            .addTo(map.current);
+          marker.current = L.marker([lat, lng], {
+            draggable: true
+          }).addTo(map.current);
           
-          marker.current.on('dragend', () => {
-            const lngLat = marker.current.getLngLat();
-            updateLocation(lngLat.lat, lngLat.lng);
+          marker.current.on('dragend', (e) => {
+            const { lat, lng } = e.target.getLatLng();
+            updateLocation(lat, lng);
           });
         } else {
-          marker.current.setLngLat([lng, lat]);
+          marker.current.setLatLng([lat, lng]);
         }
         
         updateLocation(lat, lng);
       });
       
-      map.current.on('load', () => {
-        if (!formData.location.latitude || !formData.location.longitude) {
-          setTimeout(() => {
-            try {
-              geolocateControl.trigger();
-            } catch (e) {
-              console.error('Error triggering geolocate:', e);
+      // Try to get user location
+      if (!formData.location.latitude || !formData.location.longitude) {
+        setTimeout(() => {
+          try {
+            if (navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(
+                (position) => {
+                  const lat = position.coords.latitude;
+                  const lng = position.coords.longitude;
+                  map.current.setView([lat, lng], 15);
+                  updateLocation(lat, lng);
+                },
+                (error) => {
+                  console.warn('Geolocation error:', error);
+                }
+              );
             }
-          }, 1000);
-        }
-      });
-      
-      geolocateControl.on('geolocate', (e) => {
-        try {
-          const lat = e.coords.latitude;
-          const lng = e.coords.longitude;
-          
-          if (!marker.current) {
-            marker.current = new mapboxgl.Marker({ draggable: true })
-              .setLngLat([lng, lat])
-              .addTo(map.current);
-            
-            marker.current.on('dragend', () => {
-              const lngLat = marker.current.getLngLat();
-              updateLocation(lngLat.lat, lngLat.lng);
-            });
-          } else {
-            marker.current.setLngLat([lng, lat]);
+          } catch (e) {
+            console.error('Error triggering geolocation:', e);
           }
-          
-          updateLocation(lat, lng);
-        } catch (error) {
-          console.error('Error handling geolocate event:', error);
-        }
-      });
+        }, 1000);
+      }
       
       console.log("Map initialized successfully");
     } catch (error) {
@@ -346,6 +328,10 @@ const ReportComplaint = () => {
           imageUrls.push(filePath);
         }
       }
+
+      // Get the department_id from the selected category
+      const selectedCategory = categories.find(cat => cat.id === parseInt(formData.category_id));
+      const departmentId = selectedCategory?.default_department_id || null;
       
       // For PostGIS geography(Point, 4326), we need to use the text representation
       // PostGIS can parse WKT directly, so we create it using the correct format
@@ -356,6 +342,7 @@ const ReportComplaint = () => {
         title: formData.title,
         description: formData.description,
         category_id: parseInt(formData.category_id),
+        department_id: departmentId, // Automatically assign to department based on category
         location: wktLocation, // Send as WKT string with SRID
         reported_by: formData.anonymous ? null : user.id,
         anonymous: formData.anonymous,
@@ -364,13 +351,20 @@ const ReportComplaint = () => {
       };
       
       console.log('Submitting complaint with data:', complaintData);
+      console.log('Selected category:', selectedCategory);
+      console.log('Department ID being assigned:', departmentId);
       
       const { data, error } = await supabase
         .from('complaints')
         .insert([complaintData])
-        .select();
+        .select('*, departments(name), categories(name)');
         
-      if (error) throw error;
+      if (error) {
+        console.error('Database error:', error);
+        throw error;
+      }
+      
+      console.log('Complaint created successfully:', data);
       
       setSuccess(true);
       
@@ -403,16 +397,16 @@ const ReportComplaint = () => {
             });
             
             if (!marker.current) {
-              marker.current = new mapboxgl.Marker({ draggable: true })
-                .setLngLat([longitude, latitude])
-                .addTo(map.current);
+              marker.current = L.marker([latitude, longitude], {
+                draggable: true
+              }).addTo(map.current);
               
-              marker.current.on('dragend', () => {
-                const lngLat = marker.current.getLngLat();
-                updateLocation(lngLat.lat, lngLat.lng);
+              marker.current.on('dragend', (e) => {
+                const { lat, lng } = e.target.getLatLng();
+                updateLocation(lat, lng);
               });
             } else {
-              marker.current.setLngLat([longitude, latitude]);
+              marker.current.setLatLng([latitude, longitude]);
             }
             
             updateLocation(latitude, longitude);

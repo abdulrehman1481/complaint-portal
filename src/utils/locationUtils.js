@@ -1,9 +1,8 @@
 // Import statements
-const MAPBOX_TOKEN = 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
 
 /**
  * Get the nearest place/address for a set of coordinates
- * Uses Mapbox Reverse Geocoding API
+ * Uses OpenStreetMap Nominatim Reverse Geocoding API (free alternative to Mapbox)
  * 
  * @param {number} longitude - The longitude coordinate
  * @param {number} latitude - The latitude coordinate
@@ -16,9 +15,14 @@ export const getNearestLocation = async (longitude, latitude) => {
       return 'Unknown location';
     }
     
-    // Call Mapbox Reverse Geocoding API
+    // Call OpenStreetMap Nominatim Reverse Geocoding API
     const response = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?access_token=${MAPBOX_TOKEN}&types=address,neighborhood,locality,place&limit=1`
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
+      {
+        headers: {
+          'User-Agent': 'ComplaintManagementSystem/1.0'
+        }
+      }
     );
     
     if (!response.ok) {
@@ -27,10 +31,33 @@ export const getNearestLocation = async (longitude, latitude) => {
     
     const data = await response.json();
     
-    // Extract the place name and address
-    if (data.features && data.features.length > 0) {
-      // Return the place name or formatted address
-      return data.features[0].place_name;
+    if (data && data.display_name) {
+      // Extract useful parts of the address
+      const address = data.address;
+      if (address) {
+        const parts = [];
+        
+        // Add house number and road
+        if (address.house_number && address.road) {
+          parts.push(`${address.house_number} ${address.road}`);
+        } else if (address.road) {
+          parts.push(address.road);
+        }
+        
+        // Add suburb/neighbourhood
+        if (address.suburb || address.neighbourhood) {
+          parts.push(address.suburb || address.neighbourhood);
+        }
+        
+        // Add city/town
+        if (address.city || address.town || address.village) {
+          parts.push(address.city || address.town || address.village);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : data.display_name;
+      }
+      
+      return data.display_name;
     }
     
     return 'Location name unavailable';

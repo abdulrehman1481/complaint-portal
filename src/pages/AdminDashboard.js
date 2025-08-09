@@ -1,23 +1,46 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { useNavigate } from 'react-router-dom';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.markercluster/dist/leaflet.markercluster.js';
+// Drawing and Heatmap imports
+import 'leaflet-draw/dist/leaflet.draw.css';
+import 'leaflet-draw/dist/leaflet.draw.js';
+import 'leaflet.heat';
+import '../styles/leaflet-admin.css';
+// Chart.js imports
+import Chart from 'chart.js/auto';
+import 'chartjs-adapter-date-fns';
+// Recharts imports
+import { 
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
+  Area, AreaChart, RadialBarChart, RadialBar, TreeMap
+} from 'recharts';
 import { 
   Users, AlertTriangle, CheckCircle, Clock, LogOut, 
   Settings, Home, Map as MapIcon, BarChart2, Bell, ArrowLeft,
-  Building, RefreshCw, X 
+  Building, RefreshCw, X, Layers, Edit3, Circle, Square, 
+  Triangle, Hexagon, MapPin
 } from 'lucide-react';
-
-// Import our components
 import DashboardStats from '../components/admin/DashboardStats';
 import ComplaintsTable from '../components/admin/ComplaintsTable';
 import UserManagement from '../components/admin/UserManagement';
 import DepartmentManagement from '../components/admin/DepartmentManagement';
-import Analytics from './analytics'; // Import the Analytics component
-
-// Import the fixed location parser
+import Analytics from './analytics';
 import { parseLocation, formatLocationForDisplay } from '../utils/locationFormatter';
+import { pointsInPolygon, createBufferAround, calculateCentroid, generateConvexHull } from '../utils/spatialAnalysis';
+
+// Fix for default markers in Leaflet
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+  iconUrl: require('leaflet/dist/images/marker-icon.png'),
+  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
 
 const AdminDashboard = () => {
   const [user, setUser] = useState(null);
@@ -40,6 +63,21 @@ const AdminDashboard = () => {
   const [isPromoteModalOpen, setIsPromoteModalOpen] = useState(false);
   const [selectedRole, setSelectedRole] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
+
+  // Enhanced state for drawing and spatial analysis
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const [drawingTool, setDrawingTool] = useState(null);
+  const [drawnFeatures, setDrawnFeatures] = useState([]);
+  const [spatialAnalysisResults, setSpatialAnalysisResults] = useState(null);
+  const [heatmapVisible, setHeatmapVisible] = useState(false);
+  const [clusteringEnabled, setClusteringEnabled] = useState(true);
+  
+  // Chart references for enhanced analytics
+  const statusChartRef = useRef(null);
+  const categoryChartRef = useRef(null);
+  const trendChartRef = useRef(null);
+  const performanceChartRef = useRef(null);
+  const geoChartRef = useRef(null);
 
   const [complaintFilters, setComplaintFilters] = useState({
     status: '',
@@ -64,12 +102,25 @@ const AdminDashboard = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [isFilterApplied, setIsFilterApplied] = useState(false);
   
-  // Analytics state
+  // Enhanced Analytics state
   const [analyticsData, setAnalyticsData] = useState({
     complaintsByCategory: [],
     complaintsByStatus: [],
+    complaintsByDepartment: [],
     resolutionTime: null,
-    trendData: []
+    avgResolutionTime: 0,
+    trendData: [],
+    geospatialData: [],
+    timeSeriesData: [],
+    performanceMetrics: {
+      responseTime: 0,
+      resolutionRate: 0,
+      customerSatisfaction: 0,
+      reopenRate: 0
+    },
+    heatmapData: [],
+    densityAnalysis: [],
+    categoryTrends: []
   });
 
   // Enhanced user management state
@@ -580,6 +631,7 @@ const AdminDashboard = () => {
       // Refresh complaints data with pagination when switching to complaints tab
       fetchComplaints(1);
     } else if (tab === 'analytics') {
+      // Fetch comprehensive analytics data
       fetchAnalyticsData();
     }
   };
@@ -791,16 +843,1289 @@ const AdminDashboard = () => {
     }
   };
   
+  // Enhanced Analytics Functions
   const fetchAnalyticsData = async () => {
-    // Implement analytics data fetching
-    console.log("Analytics data would be fetched here");
+    try {
+      console.log('Fetching comprehensive analytics data...');
+      setLoading(true);
+
+      // Parallel fetch for better performance
+      const [
+        categoryStats,
+        statusStats,
+        departmentStats,
+        trendData,
+        resolutionMetrics,
+        geospatialData,
+        performanceData
+      ] = await Promise.all([
+        fetchComplaintsByCategory(),
+        fetchComplaintsByStatus(), 
+        fetchComplaintsByDepartment(),
+        fetchTrendAnalysis(),
+        fetchResolutionMetrics(),
+        fetchGeospatialAnalysis(),
+        fetchPerformanceMetrics()
+      ]);
+
+      setAnalyticsData({
+        complaintsByCategory: categoryStats,
+        complaintsByStatus: statusStats,
+        complaintsByDepartment: departmentStats,
+        trendData: trendData.trends,
+        timeSeriesData: trendData.timeSeries,
+        resolutionTime: resolutionMetrics.avgTime,
+        avgResolutionTime: resolutionMetrics.avgHours,
+        performanceMetrics: performanceData,
+        geospatialData: geospatialData.clusters,
+        heatmapData: geospatialData.heatmap,
+        densityAnalysis: geospatialData.density,
+        categoryTrends: trendData.categoryTrends
+      });
+
+      console.log('Analytics data loaded successfully');
+    } catch (error) {
+      console.error('Error fetching analytics data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch complaints by category with enhanced metrics
+  const fetchComplaintsByCategory = async () => {
+    try {
+      let query = supabase
+        .from('complaints')
+        .select(`
+          category_id,
+          status,
+          created_at,
+          resolved_at,
+          categories (id, name, icon)
+        `);
+
+      // Apply department filtering for Department Admins
+      if (user?.roles?.name === 'Department Admin' && user?.department_id) {
+        const { data: deptCategories } = await supabase
+          .from('department_categories')
+          .select('category_id')
+          .eq('department_id', user.department_id);
+          
+        if (deptCategories && deptCategories.length > 0) {
+          const categoryIds = deptCategories.map(dc => dc.category_id);
+          query = query.in('category_id', categoryIds);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Process data with enhanced metrics
+      const categoryMap = {};
+      
+      data.forEach(complaint => {
+        const categoryId = complaint.category_id;
+        const categoryName = complaint.categories?.name || 'Uncategorized';
+        const categoryIcon = complaint.categories?.icon || '📍';
+        
+        if (!categoryMap[categoryId]) {
+          categoryMap[categoryId] = {
+            id: categoryId,
+            name: categoryName,
+            icon: categoryIcon,
+            total: 0,
+            open: 0,
+            inProgress: 0,
+            resolved: 0,
+            avgResolutionTime: 0,
+            resolutionTimes: []
+          };
+        }
+        
+        categoryMap[categoryId].total++;
+        
+        if (complaint.status === 'open') categoryMap[categoryId].open++;
+        else if (complaint.status === 'in_progress') categoryMap[categoryId].inProgress++;
+        else if (complaint.status === 'resolved') {
+          categoryMap[categoryId].resolved++;
+          
+          // Calculate resolution time if available
+          if (complaint.resolved_at && complaint.created_at) {
+            const resolutionTime = (new Date(complaint.resolved_at) - new Date(complaint.created_at)) / (1000 * 60 * 60);
+            categoryMap[categoryId].resolutionTimes.push(resolutionTime);
+          }
+        }
+      });
+
+      // Calculate average resolution times
+      Object.values(categoryMap).forEach(category => {
+        if (category.resolutionTimes.length > 0) {
+          category.avgResolutionTime = category.resolutionTimes.reduce((a, b) => a + b, 0) / category.resolutionTimes.length;
+        }
+        category.resolutionRate = category.total > 0 ? (category.resolved / category.total * 100).toFixed(1) : 0;
+      });
+
+      return Object.values(categoryMap).sort((a, b) => b.total - a.total);
+    } catch (error) {
+      console.error('Error fetching category analytics:', error);
+      return [];
+    }
+  };
+
+  // Fetch complaints by status with time-based analysis
+  const fetchComplaintsByStatus = async () => {
+    try {
+      let query = supabase
+        .from('complaints')
+        .select('status, created_at, resolved_at');
+
+      // Apply department filtering
+      if (user?.roles?.name === 'Department Admin' && user?.department_id) {
+        const { data: deptCategories } = await supabase
+          .from('department_categories')
+          .select('category_id')
+          .eq('department_id', user.department_id);
+          
+        if (deptCategories && deptCategories.length > 0) {
+          const categoryIds = deptCategories.map(dc => dc.category_id);
+          query = query.in('category_id', categoryIds);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const statusStats = {
+        open: { count: 0, avgAge: 0, ages: [] },
+        in_progress: { count: 0, avgAge: 0, ages: [] },
+        resolved: { count: 0, avgResolutionTime: 0, resolutionTimes: [] }
+      };
+
+      const now = new Date();
+
+      data.forEach(complaint => {
+        const createdAt = new Date(complaint.created_at);
+        const ageInHours = (now - createdAt) / (1000 * 60 * 60);
+
+        if (complaint.status === 'open') {
+          statusStats.open.count++;
+          statusStats.open.ages.push(ageInHours);
+        } else if (complaint.status === 'in_progress') {
+          statusStats.in_progress.count++;
+          statusStats.in_progress.ages.push(ageInHours);
+        } else if (complaint.status === 'resolved') {
+          statusStats.resolved.count++;
+          
+          if (complaint.resolved_at) {
+            const resolutionTime = (new Date(complaint.resolved_at) - createdAt) / (1000 * 60 * 60);
+            statusStats.resolved.resolutionTimes.push(resolutionTime);
+          }
+        }
+      });
+
+      // Calculate averages
+      if (statusStats.open.ages.length > 0) {
+        statusStats.open.avgAge = statusStats.open.ages.reduce((a, b) => a + b, 0) / statusStats.open.ages.length;
+      }
+      
+      if (statusStats.in_progress.ages.length > 0) {
+        statusStats.in_progress.avgAge = statusStats.in_progress.ages.reduce((a, b) => a + b, 0) / statusStats.in_progress.ages.length;
+      }
+      
+      if (statusStats.resolved.resolutionTimes.length > 0) {
+        statusStats.resolved.avgResolutionTime = statusStats.resolved.resolutionTimes.reduce((a, b) => a + b, 0) / statusStats.resolved.resolutionTimes.length;
+      }
+
+      return [
+        { name: 'Open', value: statusStats.open.count, color: '#EF4444', avgAge: statusStats.open.avgAge },
+        { name: 'In Progress', value: statusStats.in_progress.count, color: '#F59E0B', avgAge: statusStats.in_progress.avgAge },
+        { name: 'Resolved', value: statusStats.resolved.count, color: '#10B981', avgResolutionTime: statusStats.resolved.avgResolutionTime }
+      ];
+    } catch (error) {
+      console.error('Error fetching status analytics:', error);
+      return [];
+    }
+  };
+
+  // Fetch complaints by department
+  const fetchComplaintsByDepartment = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('complaints')
+        .select(`
+          category_id,
+          status,
+          created_at,
+          resolved_at,
+          categories (
+            id,
+            name,
+            default_department_id,
+            departments (id, name)
+          )
+        `);
+
+      if (error) throw error;
+
+      const departmentMap = {};
+
+      data.forEach(complaint => {
+        const dept = complaint.categories?.departments;
+        const deptId = dept?.id || 'unassigned';
+        const deptName = dept?.name || 'Unassigned';
+
+        if (!departmentMap[deptId]) {
+          departmentMap[deptId] = {
+            id: deptId,
+            name: deptName,
+            total: 0,
+            open: 0,
+            inProgress: 0,
+            resolved: 0,
+            avgResolutionTime: 0,
+            resolutionTimes: []
+          };
+        }
+
+        departmentMap[deptId].total++;
+        
+        if (complaint.status === 'open') departmentMap[deptId].open++;
+        else if (complaint.status === 'in_progress') departmentMap[deptId].inProgress++;
+        else if (complaint.status === 'resolved') {
+          departmentMap[deptId].resolved++;
+          
+          if (complaint.resolved_at && complaint.created_at) {
+            const resolutionTime = (new Date(complaint.resolved_at) - new Date(complaint.created_at)) / (1000 * 60 * 60);
+            departmentMap[deptId].resolutionTimes.push(resolutionTime);
+          }
+        }
+      });
+
+      // Calculate metrics
+      Object.values(departmentMap).forEach(dept => {
+        if (dept.resolutionTimes.length > 0) {
+          dept.avgResolutionTime = dept.resolutionTimes.reduce((a, b) => a + b, 0) / dept.resolutionTimes.length;
+        }
+        dept.resolutionRate = dept.total > 0 ? (dept.resolved / dept.total * 100).toFixed(1) : 0;
+        dept.efficiency = dept.total > 0 ? ((dept.resolved + dept.inProgress) / dept.total * 100).toFixed(1) : 0;
+      });
+
+      return Object.values(departmentMap).sort((a, b) => b.total - a.total);
+    } catch (error) {
+      console.error('Error fetching department analytics:', error);
+      return [];
+    }
+  };
+
+  // Enhanced trend analysis with time series data
+  const fetchTrendAnalysis = async () => {
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      let query = supabase
+        .from('complaints')
+        .select('created_at, status, category_id, categories(name)')
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      // Apply department filtering
+      if (user?.roles?.name === 'Department Admin' && user?.department_id) {
+        const { data: deptCategories } = await supabase
+          .from('department_categories')
+          .select('category_id')
+          .eq('department_id', user.department_id);
+          
+        if (deptCategories && deptCategories.length > 0) {
+          const categoryIds = deptCategories.map(dc => dc.category_id);
+          query = query.in('category_id', categoryIds);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Process daily trends
+      const dailyTrends = {};
+      const categoryTrends = {};
+
+      data.forEach(complaint => {
+        const date = new Date(complaint.created_at).toISOString().split('T')[0];
+        const category = complaint.categories?.name || 'Uncategorized';
+
+        // Daily trends
+        if (!dailyTrends[date]) {
+          dailyTrends[date] = { date, total: 0, open: 0, inProgress: 0, resolved: 0 };
+        }
+        dailyTrends[date].total++;
+        dailyTrends[date][complaint.status.replace('_', '')]++;
+
+        // Category trends
+        if (!categoryTrends[category]) {
+          categoryTrends[category] = {};
+        }
+        if (!categoryTrends[category][date]) {
+          categoryTrends[category][date] = 0;
+        }
+        categoryTrends[category][date]++;
+      });
+
+      // Fill missing dates with zeros
+      const trends = [];
+      const timeSeries = [];
+      const now = new Date();
+      
+      for (let d = new Date(thirtyDaysAgo); d <= now; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        const dayData = dailyTrends[dateStr] || { date: dateStr, total: 0, open: 0, inProgress: 0, resolved: 0 };
+        
+        trends.push(dayData);
+        timeSeries.push({
+          date: dateStr,
+          complaints: dayData.total,
+          weekday: d.toLocaleDateString('en-US', { weekday: 'long' })
+        });
+      }
+
+      return {
+        trends: trends.sort((a, b) => new Date(a.date) - new Date(b.date)),
+        timeSeries: timeSeries,
+        categoryTrends: Object.entries(categoryTrends).map(([category, data]) => ({
+          category,
+          data: Object.entries(data).map(([date, count]) => ({ date, count }))
+        }))
+      };
+    } catch (error) {
+      console.error('Error fetching trend analysis:', error);
+      return { trends: [], timeSeries: [], categoryTrends: [] };
+    }
+  };
+
+  // Enhanced resolution metrics
+  const fetchResolutionMetrics = async () => {
+    try {
+      let query = supabase
+        .from('complaints')
+        .select('created_at, resolved_at, status')
+        .eq('status', 'resolved')
+        .not('resolved_at', 'is', null);
+
+      // Apply department filtering
+      if (user?.roles?.name === 'Department Admin' && user?.department_id) {
+        const { data: deptCategories } = await supabase
+          .from('department_categories')
+          .select('category_id')
+          .eq('department_id', user.department_id);
+          
+        if (deptCategories && deptCategories.length > 0) {
+          const categoryIds = deptCategories.map(dc => dc.category_id);
+          query = query.in('category_id', categoryIds);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        return { avgTime: 'No data', avgHours: 0 };
+      }
+
+      const resolutionTimes = data.map(complaint => {
+        const created = new Date(complaint.created_at);
+        const resolved = new Date(complaint.resolved_at);
+        return (resolved - created) / (1000 * 60 * 60); // in hours
+      });
+
+      const avgHours = resolutionTimes.reduce((a, b) => a + b, 0) / resolutionTimes.length;
+      
+      let avgTime;
+      if (avgHours < 24) {
+        avgTime = `${avgHours.toFixed(1)} hours`;
+      } else {
+        avgTime = `${(avgHours / 24).toFixed(1)} days`;
+      }
+
+      return { avgTime, avgHours };
+    } catch (error) {
+      console.error('Error fetching resolution metrics:', error);
+      return { avgTime: 'Error', avgHours: 0 };
+    }
+  };
+
+  // Enhanced geospatial analysis for Leaflet integration
+  const fetchGeospatialAnalysis = async () => {
+    try {
+      let query = supabase
+        .from('complaints')
+        .select('id, location, status, category_id, created_at, categories(name, icon)');
+
+      // Apply department filtering
+      if (user?.roles?.name === 'Department Admin' && user?.department_id) {
+        const { data: deptCategories } = await supabase
+          .from('department_categories')
+          .select('category_id')
+          .eq('department_id', user.department_id);
+          
+        if (deptCategories && deptCategories.length > 0) {
+          const categoryIds = deptCategories.map(dc => dc.category_id);
+          query = query.in('category_id', categoryIds);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const geoData = data
+        .map(complaint => {
+          const parsedLocation = parseLocation(complaint.location);
+          if (!parsedLocation || !parsedLocation.latitude || !parsedLocation.longitude) {
+            return null;
+          }
+          
+          return {
+            id: complaint.id,
+            lat: parsedLocation.latitude,
+            lng: parsedLocation.longitude,
+            status: complaint.status,
+            category: complaint.categories?.name || 'Uncategorized',
+            categoryIcon: complaint.categories?.icon || '📍',
+            created_at: complaint.created_at
+          };
+        })
+        .filter(item => item !== null);
+
+      // Create clusters for density analysis
+      const clusters = createDensityClusters(geoData);
+      
+      // Create heatmap data for Leaflet
+      const heatmapData = geoData.map(point => [point.lat, point.lng, 1]);
+      
+      // Analyze density patterns
+      const densityAnalysis = analyzeDensityPatterns(geoData);
+
+      return {
+        clusters,
+        heatmap: heatmapData,
+        density: densityAnalysis,
+        totalGeolocated: geoData.length
+      };
+    } catch (error) {
+      console.error('Error fetching geospatial analysis:', error);
+      return { clusters: [], heatmap: [], density: [], totalGeolocated: 0 };
+    }
+  };
+
+  // Performance metrics calculation
+  const fetchPerformanceMetrics = async () => {
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      let query = supabase
+        .from('complaints')
+        .select('created_at, resolved_at, status, updated_at')
+        .gte('created_at', thirtyDaysAgo.toISOString());
+
+      // Apply department filtering
+      if (user?.roles?.name === 'Department Admin' && user?.department_id) {
+        const { data: deptCategories } = await supabase
+          .from('department_categories')
+          .select('category_id')
+          .eq('department_id', user.department_id);
+          
+        if (deptCategories && deptCategories.length > 0) {
+          const categoryIds = deptCategories.map(dc => dc.category_id);
+          query = query.in('category_id', categoryIds);
+        }
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const total = data.length;
+      const resolved = data.filter(c => c.status === 'resolved').length;
+      const inProgress = data.filter(c => c.status === 'in_progress').length;
+
+      // Calculate response time (time to first update)
+      const responseTimes = data
+        .filter(c => c.updated_at !== c.created_at)
+        .map(c => (new Date(c.updated_at) - new Date(c.created_at)) / (1000 * 60 * 60));
+
+      const avgResponseTime = responseTimes.length > 0 
+        ? responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length 
+        : 0;
+
+      // Calculate resolution rate
+      const resolutionRate = total > 0 ? (resolved / total * 100) : 0;
+
+      // Simulate customer satisfaction (would come from feedback system)
+      const customerSatisfaction = Math.min(100, Math.max(0, 85 - (avgResponseTime / 24) * 5));
+
+      // Calculate reopen rate (simulated - would need tracking of reopened complaints)
+      const reopenRate = Math.max(0, 5 - (resolutionRate / 20));
+
+      return {
+        responseTime: avgResponseTime,
+        resolutionRate: resolutionRate,
+        customerSatisfaction: customerSatisfaction,
+        reopenRate: reopenRate
+      };
+    } catch (error) {
+      console.error('Error fetching performance metrics:', error);
+      return {
+        responseTime: 0,
+        resolutionRate: 0,
+        customerSatisfaction: 0,
+        reopenRate: 0
+      };
+    }
+  };
+
+  // Utility function to create density clusters
+  const createDensityClusters = (geoData) => {
+    const clusters = [];
+    const processed = new Set();
+    const clusterRadius = 0.01; // Approximately 1km at equator
+
+    geoData.forEach((point, index) => {
+      if (processed.has(index)) return;
+
+      const cluster = {
+        center: { lat: point.lat, lng: point.lng },
+        points: [point],
+        totalComplaints: 1,
+        statusBreakdown: { open: 0, in_progress: 0, resolved: 0 },
+        categories: {}
+      };
+
+      // Count initial point
+      cluster.statusBreakdown[point.status]++;
+      cluster.categories[point.category] = (cluster.categories[point.category] || 0) + 1;
+
+      // Find nearby points
+      geoData.forEach((otherPoint, otherIndex) => {
+        if (otherIndex === index || processed.has(otherIndex)) return;
+
+        const distance = Math.sqrt(
+          Math.pow(point.lat - otherPoint.lat, 2) + 
+          Math.pow(point.lng - otherPoint.lng, 2)
+        );
+
+        if (distance <= clusterRadius) {
+          cluster.points.push(otherPoint);
+          cluster.totalComplaints++;
+          cluster.statusBreakdown[otherPoint.status]++;
+          cluster.categories[otherPoint.category] = (cluster.categories[otherPoint.category] || 0) + 1;
+          processed.add(otherIndex);
+        }
+      });
+
+      processed.add(index);
+      clusters.push(cluster);
+    });
+
+    return clusters.sort((a, b) => b.totalComplaints - a.totalComplaints);
+  };
+
+  // Utility function to analyze density patterns
+  const analyzeDensityPatterns = (geoData) => {
+    if (geoData.length === 0) return [];
+
+    // Calculate bounding box
+    const lats = geoData.map(p => p.lat);
+    const lngs = geoData.map(p => p.lng);
+    
+    const bounds = {
+      north: Math.max(...lats),
+      south: Math.min(...lats),
+      east: Math.max(...lngs),
+      west: Math.min(...lngs)
+    };
+
+    // Create grid for density analysis
+    const gridSize = 0.005; // Grid cell size
+    const grid = {};
+
+    geoData.forEach(point => {
+      const gridLat = Math.floor(point.lat / gridSize) * gridSize;
+      const gridLng = Math.floor(point.lng / gridSize) * gridSize;
+      const key = `${gridLat},${gridLng}`;
+
+      if (!grid[key]) {
+        grid[key] = {
+          lat: gridLat,
+          lng: gridLng,
+          count: 0,
+          density: 'low'
+        };
+      }
+      grid[key].count++;
+    });
+
+    // Determine density levels
+    const counts = Object.values(grid).map(cell => cell.count);
+    const maxCount = Math.max(...counts);
+    const avgCount = counts.reduce((a, b) => a + b, 0) / counts.length;
+
+    Object.values(grid).forEach(cell => {
+      if (cell.count >= maxCount * 0.7) cell.density = 'high';
+      else if (cell.count >= avgCount) cell.density = 'medium';
+      else cell.density = 'low';
+    });
+
+    return Object.values(grid).filter(cell => cell.count > 0);
   };
   
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate('/');
+  // Enhanced export functionality for analytics
+  const exportAnalyticsData = async (type) => {
+    try {
+      setIsExporting(true);
+      
+      const timestamp = new Date().toISOString().slice(0, 10);
+      let exportData = [];
+      let filename = '';
+
+      switch (type) {
+        case 'summary':
+          exportData = [
+            {
+              'Metric': 'Total Complaints',
+              'Value': stats.totalComplaints,
+              'Period': 'All Time'
+            },
+            {
+              'Metric': 'Open Complaints',
+              'Value': stats.openComplaints,
+              'Period': 'Current'
+            },
+            {
+              'Metric': 'Resolution Rate',
+              'Value': `${analyticsData.performanceMetrics.resolutionRate?.toFixed(1)}%`,
+              'Period': 'Last 30 Days'
+            },
+            {
+              'Metric': 'Average Response Time',
+              'Value': `${analyticsData.performanceMetrics.responseTime?.toFixed(1)} hours`,
+              'Period': 'Last 30 Days'
+            },
+            {
+              'Metric': 'Customer Satisfaction',
+              'Value': `${analyticsData.performanceMetrics.customerSatisfaction?.toFixed(0)}%`,
+              'Period': 'Estimated'
+            }
+          ];
+          filename = `analytics_summary_${timestamp}.csv`;
+          break;
+
+        case 'detailed':
+          exportData = analyticsData.complaintsByCategory.map(category => ({
+            'Category': category.name,
+            'Total Complaints': category.total,
+            'Open': category.open,
+            'In Progress': category.inProgress,
+            'Resolved': category.resolved,
+            'Resolution Rate': `${category.resolutionRate}%`,
+            'Avg Resolution Time (hours)': category.avgResolutionTime?.toFixed(1) || 'N/A'
+          }));
+          filename = `analytics_detailed_${timestamp}.csv`;
+          break;
+
+        case 'geospatial':
+          exportData = analyticsData.geospatialData.map((cluster, index) => ({
+            'Cluster ID': index + 1,
+            'Latitude': cluster.center.lat.toFixed(6),
+            'Longitude': cluster.center.lng.toFixed(6),
+            'Total Complaints': cluster.totalComplaints,
+            'Open Complaints': cluster.statusBreakdown.open,
+            'In Progress': cluster.statusBreakdown.in_progress,
+            'Resolved': cluster.statusBreakdown.resolved,
+            'Top Category': Object.entries(cluster.categories).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'
+          }));
+          filename = `analytics_geospatial_${timestamp}.csv`;
+          break;
+
+        default:
+          throw new Error('Invalid export type');
+      }
+
+      // Convert to CSV
+      if (exportData.length === 0) {
+        alert('No data available for export');
+        return;
+      }
+
+      const headers = Object.keys(exportData[0]).join(',');
+      const rows = exportData.map(obj => 
+        Object.values(obj).map(value => 
+          typeof value === 'string' ? `"${value.replace(/"/g, '""')}"` : value
+        ).join(',')
+      );
+
+      const csvContent = [headers, ...rows].join('\n');
+
+      // Create download link
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+
+    } catch (error) {
+      console.error('Error exporting analytics data:', error);
+      alert('Failed to export analytics data. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
   };
   
+  // Enhanced Drawing and Spatial Analysis Functions
+  const initializeDrawingControls = (map) => {
+    if (!map || window.adminDrawControl) return;
+
+    try {
+      // Create feature groups for drawn items
+      const drawnItems = new L.FeatureGroup();
+      map.addLayer(drawnItems);
+      window.adminDrawnItems = drawnItems;
+
+      // Initialize drawing control
+      const drawControl = new L.Control.Draw({
+        position: 'topright',
+        draw: {
+          polygon: {
+            allowIntersection: false,
+            showArea: true,
+            drawError: {
+              color: '#e1e100',
+              message: '<strong>Error:</strong> Shape edges cannot cross!'
+            },
+            shapeOptions: {
+              color: '#1e40af',
+              fillColor: '#3b82f6',
+              fillOpacity: 0.3,
+              weight: 2
+            }
+          },
+          circle: {
+            shapeOptions: {
+              color: '#dc2626',
+              fillColor: '#ef4444',
+              fillOpacity: 0.3,
+              weight: 2
+            }
+          },
+          rectangle: {
+            shapeOptions: {
+              color: '#059669',
+              fillColor: '#10b981',
+              fillOpacity: 0.3,
+              weight: 2
+            }
+          },
+          polyline: {
+            shapeOptions: {
+              color: '#7c3aed',
+              weight: 3
+            }
+          },
+          marker: true,
+          circlemarker: false
+        },
+        edit: {
+          featureGroup: drawnItems,
+          remove: true
+        }
+      });
+
+      map.addControl(drawControl);
+      window.adminDrawControl = drawControl;
+
+      // Event handlers for drawing
+      map.on(L.Draw.Event.CREATED, function (e) {
+        const layer = e.layer;
+        const type = e.layerType;
+        
+        // Add the drawn layer to the feature group
+        drawnItems.addLayer(layer);
+        
+        // Perform spatial analysis
+        performSpatialAnalysis(layer, type);
+        
+        // Update drawn features state
+        const feature = layer.toGeoJSON();
+        feature.properties = {
+          id: Date.now(),
+          type: type,
+          created: new Date().toISOString(),
+          analysisResults: null
+        };
+        
+        setDrawnFeatures(prev => [...prev, feature]);
+      });
+
+      map.on(L.Draw.Event.EDITED, function (e) {
+        const layers = e.layers;
+        layers.eachLayer(function (layer) {
+          // Re-run spatial analysis for edited features
+          const type = layer.options.shapeType || 'polygon';
+          performSpatialAnalysis(layer, type);
+        });
+      });
+
+      map.on(L.Draw.Event.DELETED, function (e) {
+        const layers = e.layers;
+        layers.eachLayer(function (layer) {
+          // Remove from state
+          const layerId = layer._leaflet_id;
+          setDrawnFeatures(prev => 
+            prev.filter(f => f.properties.leafletId !== layerId)
+          );
+        });
+      });
+
+    } catch (error) {
+      console.error('Error initializing drawing controls:', error);
+    }
+  };
+
+  const performSpatialAnalysis = async (drawnLayer, type) => {
+    if (!drawnLayer || !complaints.length) return;
+
+    try {
+      // Convert complaints to GeoJSON points
+      const complaintPoints = complaints
+        .map(complaint => {
+          const parsedLocation = parseLocation(complaint.location);
+          if (!parsedLocation || !parsedLocation.latitude || !parsedLocation.longitude) return null;
+          
+          return {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [parsedLocation.longitude, parsedLocation.latitude]
+            },
+            properties: {
+              id: complaint.id,
+              status: complaint.status,
+              category: complaint.categories?.name || 'Uncategorized',
+              created_at: complaint.created_at,
+              title: complaint.title
+            }
+          };
+        })
+        .filter(point => point !== null);
+
+      const drawnFeature = drawnLayer.toGeoJSON();
+      let analysisResults = {};
+
+      if (type === 'polygon' || type === 'rectangle') {
+        // Points in polygon analysis
+        const pointsInside = pointsInPolygon(drawnFeature, complaintPoints);
+        
+        analysisResults = {
+          type: 'polygon_analysis',
+          totalPoints: pointsInside.length,
+          pointsInside: pointsInside,
+          statusBreakdown: pointsInside.reduce((acc, point) => {
+            const status = point.properties.status;
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+          }, {}),
+          categoryBreakdown: pointsInside.reduce((acc, point) => {
+            const category = point.properties.category;
+            acc[category] = (acc[category] || 0) + 1;
+            return acc;
+          }, {})
+        };
+      } else if (type === 'circle') {
+        // Buffer analysis
+        const center = drawnLayer.getLatLng();
+        const radius = drawnLayer.getRadius();
+        
+        const pointsInRadius = complaintPoints.filter(point => {
+          const pointLatLng = L.latLng(
+            point.geometry.coordinates[1], 
+            point.geometry.coordinates[0]
+          );
+          return center.distanceTo(pointLatLng) <= radius;
+        });
+
+        analysisResults = {
+          type: 'buffer_analysis',
+          center: [center.lat, center.lng],
+          radius: radius,
+          totalPoints: pointsInRadius.length,
+          pointsInRadius: pointsInRadius,
+          density: pointsInRadius.length / (Math.PI * Math.pow(radius / 1000, 2)), // points per km²
+          statusBreakdown: pointsInRadius.reduce((acc, point) => {
+            const status = point.properties.status;
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
+          }, {})
+        };
+      }
+
+      // Update the spatial analysis results
+      setSpatialAnalysisResults(prev => ({
+        ...prev,
+        [drawnLayer._leaflet_id]: analysisResults
+      }));
+
+      // Show results popup
+      showAnalysisPopup(drawnLayer, analysisResults);
+
+    } catch (error) {
+      console.error('Error performing spatial analysis:', error);
+    }
+  };
+
+  const showAnalysisPopup = (layer, results) => {
+    let popupContent = `<div class="spatial-analysis-popup">
+      <h4 class="font-bold text-lg mb-2">Spatial Analysis Results</h4>`;
+
+    if (results.type === 'polygon_analysis') {
+      popupContent += `
+        <p><strong>Total Complaints:</strong> ${results.totalPoints}</p>
+        <div class="mt-2">
+          <strong>Status Breakdown:</strong>
+          <ul class="list-disc list-inside">`;
+      
+      Object.entries(results.statusBreakdown).forEach(([status, count]) => {
+        popupContent += `<li>${status}: ${count}</li>`;
+      });
+      
+      popupContent += `</ul></div>`;
+    } else if (results.type === 'buffer_analysis') {
+      popupContent += `
+        <p><strong>Radius:</strong> ${(results.radius / 1000).toFixed(2)} km</p>
+        <p><strong>Total Complaints:</strong> ${results.totalPoints}</p>
+        <p><strong>Density:</strong> ${results.density.toFixed(2)} complaints/km²</p>`;
+    }
+
+    popupContent += `</div>`;
+
+    layer.bindPopup(popupContent, {
+      maxWidth: 300,
+      className: 'spatial-analysis-popup'
+    }).openPopup();
+  };
+
+  const addHeatmapLayer = (map) => {
+    if (!map || !analyticsData.heatmapData?.length) return;
+
+    try {
+      // Remove existing heatmap
+      if (window.adminHeatmapLayer) {
+        map.removeLayer(window.adminHeatmapLayer);
+      }
+
+      // Create heatmap layer
+      const heatmapData = analyticsData.heatmapData.map(point => [
+        point[0], point[1], point[2] || 1
+      ]);
+
+      const heatmapLayer = L.heatLayer(heatmapData, {
+        radius: 25,
+        blur: 15,
+        maxZoom: 17,
+        max: 1,
+        gradient: {
+          0.0: 'blue',
+          0.2: 'lime',
+          0.4: 'yellow',
+          0.6: 'orange',
+          0.8: 'red',
+          1.0: 'magenta'
+        }
+      });
+
+      if (heatmapVisible) {
+        map.addLayer(heatmapLayer);
+      }
+
+      window.adminHeatmapLayer = heatmapLayer;
+    } catch (error) {
+      console.error('Error adding heatmap layer:', error);
+    }
+  };
+
+  const toggleHeatmap = () => {
+    const map = window.adminMapInstance;
+    if (!map) return;
+
+    setHeatmapVisible(prev => {
+      const newVisible = !prev;
+      
+      if (newVisible && window.adminHeatmapLayer) {
+        map.addLayer(window.adminHeatmapLayer);
+      } else if (!newVisible && window.adminHeatmapLayer) {
+        map.removeLayer(window.adminHeatmapLayer);
+      }
+      
+      return newVisible;
+    });
+  };
+
+  const clearDrawnFeatures = () => {
+    if (window.adminDrawnItems) {
+      window.adminDrawnItems.clearLayers();
+    }
+    setDrawnFeatures([]);
+    setSpatialAnalysisResults({});
+  };
+
+  // Enhanced Chart Functions
+  const initializeStatusChart = () => {
+    if (!statusChartRef.current || !analyticsData.complaintsByStatus.length) return;
+
+    const ctx = statusChartRef.current.getContext('2d');
+    
+    // Destroy existing chart
+    if (statusChartRef.current.chart) {
+      statusChartRef.current.chart.destroy();
+    }
+
+    const data = analyticsData.complaintsByStatus.map(item => ({
+      label: item.name,
+      data: item.value,
+      backgroundColor: item.color,
+      borderColor: item.color,
+      borderWidth: 2
+    }));
+
+    statusChartRef.current.chart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: data.map(d => d.label),
+        datasets: [{
+          data: data.map(d => d.data),
+          backgroundColor: data.map(d => d.backgroundColor),
+          borderColor: data.map(d => d.borderColor),
+          borderWidth: 2,
+          hoverOffset: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              padding: 20,
+              usePointStyle: true
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const label = context.label || '';
+                const value = context.raw;
+                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                const percentage = ((value / total) * 100).toFixed(1);
+                return `${label}: ${value} (${percentage}%)`;
+              }
+            }
+          }
+        }
+      }
+    });
+  };
+
+  const initializeTrendChart = () => {
+    if (!trendChartRef.current || !analyticsData.trendData.length) return;
+
+    const ctx = trendChartRef.current.getContext('2d');
+    
+    if (trendChartRef.current.chart) {
+      trendChartRef.current.chart.destroy();
+    }
+
+    const labels = analyticsData.trendData.map(item => 
+      new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    );
+
+    trendChartRef.current.chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Total Complaints',
+          data: analyticsData.trendData.map(item => item.total),
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          tension: 0.4,
+          fill: true
+        }, {
+          label: 'Resolved',
+          data: analyticsData.trendData.map(item => item.resolved),
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+          tension: 0.4,
+          fill: false
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              stepSize: 1
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            position: 'top'
+          }
+        }
+      }
+    });
+  };
+
+  const initializePerformanceChart = () => {
+    if (!performanceChartRef.current || !analyticsData.performanceMetrics) return;
+
+    const ctx = performanceChartRef.current.getContext('2d');
+    
+    if (performanceChartRef.current.chart) {
+      performanceChartRef.current.chart.destroy();
+    }
+
+    const metrics = analyticsData.performanceMetrics;
+    
+    performanceChartRef.current.chart = new Chart(ctx, {
+      type: 'radar',
+      data: {
+        labels: ['Resolution Rate', 'Response Time', 'Satisfaction', 'Efficiency'],
+        datasets: [{
+          label: 'Performance Metrics',
+          data: [
+            metrics.resolutionRate,
+            100 - Math.min(metrics.responseTime * 2, 100), // Invert response time for radar
+            metrics.customerSatisfaction,
+            100 - metrics.reopenRate // Invert reopen rate
+          ],
+          backgroundColor: 'rgba(59, 130, 246, 0.2)',
+          borderColor: '#3b82f6',
+          pointBackgroundColor: '#3b82f6',
+          pointBorderColor: '#fff',
+          pointHoverBackgroundColor: '#fff',
+          pointHoverBorderColor: '#3b82f6'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        elements: {
+          line: {
+            borderWidth: 3
+          }
+        },
+        scales: {
+          r: {
+            angleLines: {
+              display: true
+            },
+            suggestedMin: 0,
+            suggestedMax: 100
+          }
+        },
+        plugins: {
+          legend: {
+            position: 'top'
+          }
+        }
+      }
+    });
+  };
+
+  // Initialize charts when analytics data changes
+  useEffect(() => {
+    if (activeTab === 'analytics') {
+      setTimeout(() => {
+        initializeStatusChart();
+        initializeTrendChart();
+        initializePerformanceChart();
+        initializeAnalyticsMiniMap();
+      }, 100);
+    }
+  }, [analyticsData, activeTab]);
+
+  // Initialize mini analytics map
+  const initializeAnalyticsMiniMap = () => {
+    const mapContainer = document.getElementById('analytics-mini-map');
+    if (!mapContainer || window.analyticsMiniMap) return;
+
+    try {
+      const miniMap = L.map('analytics-mini-map', {
+        zoomControl: false,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        boxZoom: false,
+        keyboard: false,
+        dragging: false,
+        touchZoom: false
+      }).setView([40.7128, -74.0060], 10);
+
+      // Add tile layer
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        opacity: 0.7
+      }).addTo(miniMap);
+
+      // Add heatmap if data available
+      if (analyticsData.heatmapData && analyticsData.heatmapData.length > 0) {
+        const heatLayer = L.heatLayer(analyticsData.heatmapData, {
+          radius: 20,
+          blur: 10,
+          maxZoom: 17,
+          gradient: {
+            0.0: 'blue',
+            0.2: 'lime', 
+            0.4: 'yellow',
+            0.6: 'orange',
+            0.8: 'red',
+            1.0: 'magenta'
+          }
+        }).addTo(miniMap);
+
+        // Fit map to heatmap bounds
+        if (analyticsData.heatmapData.length > 1) {
+          const bounds = L.latLngBounds(analyticsData.heatmapData.map(point => [point[0], point[1]]));
+          miniMap.fitBounds(bounds, { padding: [10, 10] });
+        }
+      }
+
+      // Add cluster markers
+      if (analyticsData.geospatialData && analyticsData.geospatialData.length > 0) {
+        analyticsData.geospatialData.slice(0, 10).forEach((cluster, index) => {
+          const marker = L.circleMarker([cluster.center.lat, cluster.center.lng], {
+            radius: Math.min(8 + (cluster.totalComplaints / 5), 15),
+            fillColor: cluster.totalComplaints > 10 ? '#ef4444' : 
+                      cluster.totalComplaints > 5 ? '#f59e0b' : '#10b981',
+            color: 'white',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.8
+          }).addTo(miniMap);
+
+          marker.bindTooltip(`Cluster ${index + 1}: ${cluster.totalComplaints} complaints`, {
+            permanent: false,
+            direction: 'top'
+          });
+        });
+      }
+
+      window.analyticsMiniMap = miniMap;
+    } catch (error) {
+      console.error('Error initializing analytics mini map:', error);
+    }
+  };
+
   const formatDate = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
@@ -810,6 +2135,11 @@ const AdminDashboard = () => {
       day: 'numeric'
     });
   };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/');
+  };
   
   // Function to load map component in admin dashboard
   const loadMapComponent = () => {
@@ -818,56 +2148,67 @@ const AdminDashboard = () => {
         const adminMapContainer = document.getElementById('admin-map-container');
         if (!adminMapContainer) return;
         
-        console.log('Initializing admin map');
-        
-        // Use same mapbox token
-        const MAPBOX_TOKEN = 'pk.eyJ1IjoiYWJyZWhtYW4xMTIyIiwiYSI6ImNtNHlrY3Q2cTBuYmsyaXIweDZrZG9yZnoifQ.FkDynV0HksdN7ICBxt2uPg';
-        
+        console.log('Initializing admin map with enhanced features');
+
         try {
-          // Create a map instance for admin
-          const map = new mapboxgl.Map({
-            container: 'admin-map-container',
-            style: 'mapbox://styles/mapbox/streets-v11',
-            center: [-74.0060, 40.7128], // Default center - NYC
-            zoom: 10,
-            accessToken: MAPBOX_TOKEN
-          });
+          // Create a Leaflet map instance for admin
+          const map = L.map('admin-map-container').setView([40.7128, -74.0060], 10);
           
-          // Add navigation and other controls
-          map.addControl(new mapboxgl.NavigationControl(), 'top-right');
-          map.addControl(new mapboxgl.GeolocateControl({
-            positionOptions: {
-              enableHighAccuracy: true
-            },
-            trackUserLocation: true,
-            showUserHeading: true
-          }), 'top-right');
-          
-          // Add scale control for better spatial context
-          map.addControl(new mapboxgl.ScaleControl(), 'bottom-left');
+          // Add tile layer
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+          }).addTo(map);
           
           // Store reference
           window.adminMapInstance = map;
           
-          // Add complaint markers once map is loaded
-          map.on('load', () => {
-            console.log('Admin map loaded, adding complaints');
-            // Add complaint source and layers for admin view
-            if (complaints.length > 0) {
-              addComplaintsToAdminMap(map, complaints);
-            } else {
-              fetchMapComplaints(complaintFilters);
-            }
-          });
+          // Initialize drawing controls
+          initializeDrawingControls(map);
+          
+          // Add heatmap layer
+          addHeatmapLayer(map);
+          
+          // Load complaints data
+          if (complaints.length > 0) {
+            addComplaintsToAdminMap(map, complaints);
+          } else {
+            fetchMapComplaints(complaintFilters);
+          }
+          
+          // Add layer control for toggling features
+          const baseLayers = {
+            "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
+            "Satellite": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')
+          };
+          
+          const overlayLayers = {};
+          if (window.adminHeatmapLayer) {
+            overlayLayers["Heatmap"] = window.adminHeatmapLayer;
+          }
+          
+          L.control.layers(baseLayers, overlayLayers, {
+            position: 'topleft'
+          }).addTo(map);
+          
         } catch (error) {
           console.error('Error initializing admin map:', error);
         }
       }, 100);
     } else {
-      console.log('Map already initialized, updating data');
-      // If map exists, just update the data
+      console.log('Map already initialized, updating data and features');
+      const map = window.adminMapInstance;
+      
+      // Re-initialize drawing controls if needed
+      if (!window.adminDrawControl) {
+        initializeDrawingControls(map);
+      }
+      
+      // Update heatmap
+      addHeatmapLayer(map);
+      
+      // Update complaints data
       if (complaints.length > 0) {
-        addComplaintsToAdminMap(window.adminMapInstance, complaints);
+        addComplaintsToAdminMap(map, complaints);
       } else {
         fetchMapComplaints(complaintFilters);
       }
@@ -920,189 +2261,101 @@ const AdminDashboard = () => {
       features: features
     };
     
-    // Check if the map is fully loaded
-    if (!map.loaded()) {
-      console.log('Map not fully loaded, waiting for load event');
-      map.once('load', () => {
-        addComplaintDataToMap(map, geojson);
-      });
-    } else {
-      addComplaintDataToMap(map, geojson);
-    }
+    // Add complaint data to map immediately
+    addComplaintDataToMap(map, geojson);
   };
   
   // Helper function to add complaint data to map
   const addComplaintDataToMap = (map, geojson) => {
     try {
-      console.log('Adding complaint data to map');
+      console.log('Adding complaint data to map with Leaflet markers');
       
-      // Add source and layers if they don't exist or update them if they do
-      if (!map.getSource('admin-complaints')) {
-        console.log('Creating new source and layers');
-        map.addSource('admin-complaints', {
-          type: 'geojson',
-          data: geojson,
-          cluster: true,
-          clusterMaxZoom: 14,
-          clusterRadius: 50
-        });
-        
-        // Add cluster layer
-        map.addLayer({
-          id: 'admin-clusters',
-          type: 'circle',
-          source: 'admin-complaints',
-          filter: ['has', 'point_count'],
-          paint: {
-            'circle-color': [
-              'step',
-              ['get', 'point_count'],
-              '#51bbd6',  // Small clusters
-              10, '#f1f075',  // Medium clusters
-              30, '#f28cb1'   // Large clusters
-            ],
-            'circle-radius': [
-              'step',
-              ['get', 'point_count'],
-              20,  // Default radius
-              10, 30,  // Medium clusters
-              30, 40   // Large clusters
-            ]
-          }
-        });
-      
-        // Add cluster count layer
-        map.addLayer({
-          id: 'admin-cluster-count',
-          type: 'symbol',
-          source: 'admin-complaints',
-          filter: ['has', 'point_count'],
-          layout: {
-            'text-field': '{point_count_abbreviated}',
-            'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
-            'text-size': 12
-          }
-        });
-        
-        // Add unclustered point layer with color based on status
-        map.addLayer({
-          id: 'admin-unclustered-point',
-          type: 'circle',
-          source: 'admin-complaints',
-          filter: ['!', ['has', 'point_count']],
-          paint: {
-            'circle-color': [
-              'match',
-              ['get', 'status'],
-              'open', '#e74c3c',       // Red for open
-              'in_progress', '#f39c12', // Yellow for in progress
-              'resolved', '#2ecc71',   // Green for resolved
-              '#3498db'                // Blue default
-            ],
-            'circle-radius': 8,
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#ffffff'
-          }
-        });
-        
-        // Add a popup on hover
-        const popup = new mapboxgl.Popup({
-          closeButton: false,
-          closeOnClick: false
-        });
-        
-        // Show popup on mouseenter
-        map.on('mouseenter', 'admin-unclustered-point', (e) => {
-          map.getCanvas().style.cursor = 'pointer';
-          
-          if (e.features.length === 0) return;
-          
-          const coordinates = e.features[0].geometry.coordinates.slice();
-          const { id, title, status, category_name, category_icon, created_at } = e.features[0].properties;
-          
-          // Format status for display
-          const displayStatus = status === 'in_progress' ? 'In Progress' : 
-                                status.charAt(0).toUpperCase() + status.slice(1);
-                                
-          // Format date
-          const date = created_at ? new Date(created_at).toLocaleDateString() : 'Unknown date';
-          
-          // Create popup content with more details
-          const popupContent = `
-            <div class="font-sans p-2">
-              <h3 class="font-bold text-sm">${title}</h3>
-              <div class="flex items-center gap-2 mt-1">
-                <span class="text-xs">${category_icon || '📍'} ${category_name}</span>
-                <span class="px-1.5 py-0.5 text-xs rounded-full 
-                  ${status === 'open' ? 'bg-red-100 text-red-800' :
-                    status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-green-100 text-green-800'}">
-                  ${displayStatus}
-                </span>
-              </div>
-              <p class="text-xs mt-1">ID: ${id} • Reported: ${date}</p>
-              <p class="text-xs mt-1 text-blue-600">Click for details</p>
-            </div>
-          `;
-          
-          // Set popup position and content
-          popup.setLngLat(coordinates)
-               .setHTML(popupContent)
-               .addTo(map);
-        });
-        
-        // Hide popup on mouseleave
-        map.on('mouseleave', 'admin-unclustered-point', () => {
-          map.getCanvas().style.cursor = '';
-          popup.remove();
-        });
-        
-        // Add click event for the points
-        map.on('click', 'admin-unclustered-point', (e) => {
-          if (e.features && e.features.length > 0) {
-            const complaintId = e.features[0].properties.id;
-            navigate(`/complaint/${complaintId}`);
-          }
-        });
-        
-        // Add click event for clusters to zoom in
-        map.on('click', 'admin-clusters', (e) => {
-          const features = map.queryRenderedFeatures(e.point, {
-            layers: ['admin-clusters']
-          });
-          
-          if (features.length > 0 && features[0].properties.cluster_id) {
-            const clusterId = features[0].properties.cluster_id;
-            map.getSource('admin-complaints').getClusterExpansionZoom(
-              clusterId,
-              (err, zoom) => {
-                if (err) return;
-                
-                map.easeTo({
-                  center: features[0].geometry.coordinates,
-                  zoom: zoom
-                });
-              }
-            );
-          }
-        });
-        
-        // Change cursor on hover over clusters
-        map.on('mouseenter', 'admin-clusters', () => {
-          map.getCanvas().style.cursor = 'pointer';
-        });
-        
-        map.on('mouseleave', 'admin-clusters', () => {
-          map.getCanvas().style.cursor = '';
-        });
-        
-      } else {
-        // Update the data if source already exists
-        console.log('Updating existing source data');
-        map.getSource('admin-complaints').setData(geojson);
+      // Clear existing markers if any
+      if (window.adminMarkersLayer) {
+        map.removeLayer(window.adminMarkersLayer);
       }
       
-      console.log('Successfully updated map with complaint data');
+      // Create marker cluster group
+      const markers = L.markerClusterGroup({
+        maxClusterRadius: 50,
+        iconCreateFunction: function(cluster) {
+          const count = cluster.getChildCount();
+          let size = 'small';
+          if (count >= 30) size = 'large';
+          else if (count >= 10) size = 'medium';
+          
+          return new L.DivIcon({
+            html: `<div class="cluster-${size}">${count}</div>`,
+            className: 'marker-cluster',
+            iconSize: new L.Point(40, 40)
+          });
+        }
+      });
+      
+      // Add markers for each complaint
+      geojson.features.forEach(feature => {
+        const { coordinates } = feature.geometry;
+        const props = feature.properties;
+        
+        // Create status color
+        let statusColor = '#3498db'; // Default blue
+        if (props.status === 'open') statusColor = '#e74c3c'; // Red
+        else if (props.status === 'in_progress') statusColor = '#f39c12'; // Yellow
+        else if (props.status === 'resolved') statusColor = '#2ecc71'; // Green
+        
+        // Create custom marker icon
+        const markerIcon = L.divIcon({
+          className: 'complaint-marker',
+          html: `<div style="background-color: ${statusColor}; border: 2px solid white; border-radius: 50%; width: 16px; height: 16px;"></div>`,
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        });
+        
+        // Create marker
+        const marker = L.marker([coordinates[1], coordinates[0]], { icon: markerIcon });
+        
+        // Format status for display
+        const displayStatus = props.status === 'in_progress' ? 'In Progress' : 
+                              props.status.charAt(0).toUpperCase() + props.status.slice(1);
+                              
+        // Format date
+        const date = props.created_at ? new Date(props.created_at).toLocaleDateString() : 'Unknown date';
+        
+        // Create popup content
+        const popupContent = `
+          <div class="font-sans p-2">
+            <h3 class="font-bold text-sm">${props.title}</h3>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="text-xs">${props.category_icon || '📍'} ${props.category_name}</span>
+              <span class="px-1.5 py-0.5 text-xs rounded-full 
+                ${props.status === 'open' ? 'bg-red-100 text-red-800' :
+                  props.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-green-100 text-green-800'}">
+                ${displayStatus}
+              </span>
+            </div>
+            <p class="text-xs mt-1">ID: ${props.id} • Reported: ${date}</p>
+            <p class="text-xs mt-1 text-blue-600">Click for details</p>
+          </div>
+        `;
+        
+        // Bind popup to marker
+        marker.bindPopup(popupContent);
+        
+        // Add click event
+        marker.on('click', () => {
+          navigate(`/complaint/${props.id}`);
+        });
+        
+        // Add marker to cluster group
+        markers.addLayer(marker);
+      });
+      
+      // Add cluster group to map
+      map.addLayer(markers);
+      window.adminMarkersLayer = markers;
+      
+      console.log('Successfully updated map with complaint markers');
     } catch (error) {
       console.error('Error adding complaint data to map:', error);
     }
@@ -1311,11 +2564,16 @@ const AdminDashboard = () => {
             />
           )}
 
-          {/* Map View */}
+          {/* Enhanced Map View with Analytics Integration */}
           {activeTab === 'map' && (
             <div className="bg-white shadow overflow-hidden sm:rounded-lg p-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
-                <h3 className="text-lg leading-6 font-medium text-gray-900">Complaints Map</h3>
+                <div>
+                  <h3 className="text-lg leading-6 font-medium text-gray-900">Complaints Map</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Geographic distribution and clustering analysis
+                  </p>
+                </div>
                 <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                   {/* Status filter dropdown */}
                   <select
@@ -1348,6 +2606,22 @@ const AdminDashboard = () => {
                   </select>
                   
                   <button
+                    onClick={() => fetchGeospatialAnalysis().then(geoData => {
+                      console.log('Refreshed geospatial analysis:', geoData);
+                      setAnalyticsData(prev => ({
+                        ...prev,
+                        geospatialData: geoData.clusters,
+                        heatmapData: geoData.heatmap,
+                        densityAnalysis: geoData.density
+                      }));
+                    })}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh Analysis
+                  </button>
+                  
+                  <button
                     onClick={() => navigate('/map')}
                     className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
                   >
@@ -1374,34 +2648,922 @@ const AdminDashboard = () => {
                 </div>
               </div>
               
-              {/* Map container */}
-              <div id="admin-map-container" className="bg-gray-100 h-[600px] rounded-lg"></div>
+              {/* Map Analytics Summary */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Total Mapped</div>
+                  <div className="text-2xl font-bold text-gray-900">
+                    {analyticsData.heatmapData?.length || 0}
+                  </div>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Clusters</div>
+                  <div className="text-2xl font-bold text-indigo-600">
+                    {analyticsData.geospatialData?.length || 0}
+                  </div>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">High Density</div>
+                  <div className="text-2xl font-bold text-red-600">
+                    {analyticsData.densityAnalysis?.filter(d => d.density === 'high').length || 0}
+                  </div>
+                </div>
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <div className="text-sm font-medium text-gray-500">Coverage</div>
+                  <div className="text-2xl font-bold text-green-600">
+                    {complaints.length > 0 ? 
+                      ((analyticsData.heatmapData?.length || 0) / complaints.length * 100).toFixed(0) : 0}%
+                  </div>
+                </div>
+              </div>
               
-              {/* Map legend */}
-              <div className="mt-4 flex flex-wrap gap-4 text-sm">
-                <div className="flex items-center">
-                  <span className="w-4 h-4 rounded-full bg-red-500 inline-block mr-2"></span>
-                  <span>Open</span>
+              {/* Enhanced Drawing Controls */}
+              <div className="mb-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="bg-white border rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3">Drawing Tools</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setDrawingTool('polygon')}
+                      className={`flex items-center justify-center px-3 py-2 text-xs rounded ${
+                        drawingTool === 'polygon' 
+                          ? 'bg-blue-100 text-blue-700 border-blue-300' 
+                          : 'bg-gray-50 text-gray-700 border-gray-300'
+                      } border hover:bg-blue-50`}
+                    >
+                      <Triangle className="h-4 w-4 mr-1" />
+                      Polygon
+                    </button>
+                    <button
+                      onClick={() => setDrawingTool('circle')}
+                      className={`flex items-center justify-center px-3 py-2 text-xs rounded ${
+                        drawingTool === 'circle' 
+                          ? 'bg-red-100 text-red-700 border-red-300' 
+                          : 'bg-gray-50 text-gray-700 border-gray-300'
+                      } border hover:bg-red-50`}
+                    >
+                      <Circle className="h-4 w-4 mr-1" />
+                      Circle
+                    </button>
+                    <button
+                      onClick={() => setDrawingTool('rectangle')}
+                      className={`flex items-center justify-center px-3 py-2 text-xs rounded ${
+                        drawingTool === 'rectangle' 
+                          ? 'bg-green-100 text-green-700 border-green-300' 
+                          : 'bg-gray-50 text-gray-700 border-gray-300'
+                      } border hover:bg-green-50`}
+                    >
+                      <Square className="h-4 w-4 mr-1" />
+                      Rectangle
+                    </button>
+                    <button
+                      onClick={clearDrawnFeatures}
+                      className="flex items-center justify-center px-3 py-2 text-xs rounded bg-red-50 text-red-700 border border-red-300 hover:bg-red-100"
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Clear
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center">
-                  <span className="w-4 h-4 rounded-full bg-yellow-500 inline-block mr-2"></span>
-                  <span>In Progress</span>
+
+                <div className="bg-white border rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3">Layer Controls</h4>
+                  <div className="space-y-2">
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={heatmapVisible}
+                        onChange={toggleHeatmap}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="ml-2 text-sm text-gray-700">Show Heatmap</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={clusteringEnabled}
+                        onChange={(e) => setClusteringEnabled(e.target.checked)}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="ml-2 text-sm text-gray-700">Enable Clustering</span>
+                    </label>
+                  </div>
                 </div>
-                <div className="flex items-center">
-                  <span className="w-4 h-4 rounded-full bg-green-500 inline-block mr-2"></span>
-                  <span>Resolved</span>
+
+                <div className="bg-white border rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3">Spatial Analysis</h4>
+                  <div className="text-sm text-gray-600">
+                    <p>Drawn features: {drawnFeatures.length}</p>
+                    {spatialAnalysisResults && Object.keys(spatialAnalysisResults).length > 0 && (
+                      <p className="text-green-600">Analysis available</p>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center">
-                  <span className="w-4 h-4 rounded-full inline-block mr-2 border-2 border-gray-500"></span>
-                  <span>Click clusters to zoom in</span>
+              </div>
+              
+              {/* Map container */}
+              <div id="admin-map-container" className="bg-gray-100 h-[600px] rounded-lg mb-4"></div>
+              
+              {/* Enhanced Map legend and controls */}
+              <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="text-sm font-medium text-gray-900 mb-2">Status Legend</h4>
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    <div className="flex items-center">
+                      <span className="w-4 h-4 rounded-full bg-red-500 inline-block mr-2"></span>
+                      <span>Open ({stats.openComplaints})</span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="w-4 h-4 rounded-full bg-yellow-500 inline-block mr-2"></span>
+                      <span>In Progress ({stats.inProgressComplaints})</span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="w-4 h-4 rounded-full bg-green-500 inline-block mr-2"></span>
+                      <span>Resolved ({stats.resolvedComplaints})</span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="w-4 h-4 rounded-full inline-block mr-2 border-2 border-gray-500"></span>
+                      <span>Click clusters to zoom in</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-gray-900 mb-2">Map Controls</h4>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => {
+                        if (window.adminMapInstance && analyticsData.heatmapData.length > 0) {
+                          // Fit map to show all complaints
+                          const bounds = L.latLngBounds(analyticsData.heatmapData.map(point => [point[0], point[1]]));
+                          window.adminMapInstance.fitBounds(bounds, { padding: [20, 20] });
+                        }
+                      }}
+                      className="px-3 py-1 text-xs bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200"
+                    >
+                      Fit All
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (window.adminMapInstance) {
+                          window.adminMapInstance.setView([40.7128, -74.0060], 10);
+                        }
+                      }}
+                      className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                    >
+                      Reset View
+                    </button>
+                    <button
+                      onClick={() => exportAnalyticsData('geospatial')}
+                      className="px-3 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                    >
+                      Export Data
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Analytics Tab */}
+          {/* Enhanced Analytics Tab with Department Focus */}
           {activeTab === 'analytics' && (
-            <Analytics /> // Replace the placeholder analytics content with the Analytics component
+            <div className="space-y-6">
+              {/* Department Filter */}
+              <div className="bg-white shadow rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-gray-900">Analytics Dashboard</h3>
+                  <div className="flex items-center space-x-4">
+                    {user?.roles?.name === 'Super Admin' && (
+                      <select
+                        className="block pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                        onChange={(e) => {
+                          // Filter analytics by department
+                          const deptId = e.target.value;
+                          // Re-fetch analytics with department filter
+                          fetchAnalyticsData();
+                        }}
+                      >
+                        <option value="">All Departments</option>
+                        {departments.map(dept => (
+                          <option key={dept.id} value={dept.id}>{dept.name}</option>
+                        ))}
+                      </select>
+                    )}
+                    <button
+                      onClick={() => fetchAnalyticsData()}
+                      className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Performance Overview Cards Enhanced */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="bg-gradient-to-r from-blue-500 to-blue-600 overflow-hidden shadow rounded-lg">
+                  <div className="p-5">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        <Clock className="h-8 w-8 text-white" />
+                      </div>
+                      <div className="ml-5 w-0 flex-1">
+                        <dl>
+                          <dt className="text-sm font-medium text-blue-100 truncate">
+                            Avg Response Time
+                          </dt>
+                          <dd className="text-2xl font-bold text-white">
+                            {analyticsData.performanceMetrics?.responseTime ? 
+                              `${analyticsData.performanceMetrics.responseTime.toFixed(1)}h` : 
+                              '...'
+                            }
+                          </dd>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-green-500 to-green-600 overflow-hidden shadow rounded-lg">
+                  <div className="p-5">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        <CheckCircle className="h-8 w-8 text-white" />
+                      </div>
+                      <div className="ml-5 w-0 flex-1">
+                        <dl>
+                          <dt className="text-sm font-medium text-green-100 truncate">
+                            Resolution Rate
+                          </dt>
+                          <dd className="text-2xl font-bold text-white">
+                            {analyticsData.performanceMetrics?.resolutionRate ? 
+                              `${analyticsData.performanceMetrics.resolutionRate.toFixed(1)}%` : 
+                              '...'
+                            }
+                          </dd>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-purple-500 to-purple-600 overflow-hidden shadow rounded-lg">
+                  <div className="p-5">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        <BarChart2 className="h-8 w-8 text-white" />
+                      </div>
+                      <div className="ml-5 w-0 flex-1">
+                        <dl>
+                          <dt className="text-sm font-medium text-purple-100 truncate">
+                            Satisfaction
+                          </dt>
+                          <dd className="text-2xl font-bold text-white">
+                            {analyticsData.performanceMetrics?.customerSatisfaction ? 
+                              `${analyticsData.performanceMetrics.customerSatisfaction.toFixed(0)}%` : 
+                              '...'
+                            }
+                          </dd>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-orange-500 to-orange-600 overflow-hidden shadow rounded-lg">
+                  <div className="p-5">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        <RefreshCw className="h-8 w-8 text-white" />
+                      </div>
+                      <div className="ml-5 w-0 flex-1">
+                        <dl>
+                          <dt className="text-sm font-medium text-orange-100 truncate">
+                            Reopen Rate
+                          </dt>
+                          <dd className="text-2xl font-bold text-white">
+                            {analyticsData.performanceMetrics?.reopenRate ? 
+                              `${analyticsData.performanceMetrics.reopenRate.toFixed(1)}%` : 
+                              '...'
+                            }
+                          </dd>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-indigo-500 to-indigo-600 overflow-hidden shadow rounded-lg">
+                  <div className="p-5">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        <Building className="h-8 w-8 text-white" />
+                      </div>
+                      <div className="ml-5 w-0 flex-1">
+                        <dl>
+                          <dt className="text-sm font-medium text-indigo-100 truncate">
+                            Departments
+                          </dt>
+                          <dd className="text-2xl font-bold text-white">
+                            {analyticsData.complaintsByDepartment?.length || 0}
+                          </dd>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Main Analytics Grid */}
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                {/* Complaints by Category Chart */}
+                <div className="xl:col-span-1 bg-white shadow rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Complaints by Category</h3>
+                    <div className="text-sm text-gray-500">
+                      Top {analyticsData.complaintsByCategory.slice(0, 8).length} Categories
+                    </div>
+                  </div>
+                  {analyticsData.complaintsByCategory.length > 0 ? (
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          data={analyticsData.complaintsByCategory.slice(0, 8)}
+                          margin={{ top: 20, right: 10, left: 10, bottom: 80 }}
+                          layout="vertical"
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis type="number" />
+                          <YAxis 
+                            type="category" 
+                            dataKey="name" 
+                            width={100}
+                            tick={{ fontSize: 10 }}
+                          />
+                          <Tooltip 
+                            formatter={(value, name) => [value, 'Complaints']}
+                            labelFormatter={(label) => `${label}`}
+                          />
+                          <Bar 
+                            dataKey="total" 
+                            fill="#3b82f6" 
+                            radius={[0, 4, 4, 0]}
+                          >
+                            {analyticsData.complaintsByCategory.slice(0, 8).map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={[
+                                '#3b82f6', '#10b981', '#f59e0b', '#ef4444', 
+                                '#8b5cf6', '#06b6d4', '#84cc16', '#f97316'
+                              ][index % 8]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <BarChart2 className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                        <p>Loading category data...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Resolution Time by Category */}
+                <div className="xl:col-span-1 bg-white shadow rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Resolution Time by Category</h3>
+                    <div className="text-sm text-gray-500">Hours</div>
+                  </div>
+                  {analyticsData.complaintsByCategory.length > 0 ? (
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart
+                          data={analyticsData.complaintsByCategory.slice(0, 6).map(cat => ({
+                            ...cat,
+                            shortName: cat.name.split(' ')[0] // Shorten names for better display
+                          }))}
+                          margin={{ top: 20, right: 30, left: 0, bottom: 60 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                          <XAxis 
+                            dataKey="shortName"
+                            angle={-45}
+                            textAnchor="end"
+                            height={60}
+                            interval={0}
+                            tick={{ fontSize: 10 }}
+                          />
+                          <YAxis 
+                            tick={{ fontSize: 10 }}
+                            label={{ value: 'Hours', angle: -90, position: 'insideLeft' }}
+                          />
+                          <Tooltip 
+                            formatter={(value) => [`${value.toFixed(1)}h`, 'Avg Resolution Time']}
+                            labelFormatter={(label) => {
+                              const category = analyticsData.complaintsByCategory.find(cat => 
+                                cat.name.split(' ')[0] === label
+                              );
+                              return category ? category.name : label;
+                            }}
+                          />
+                          <Area 
+                            type="monotone" 
+                            dataKey="avgResolutionTime" 
+                            stroke="#10b981" 
+                            strokeWidth={3}
+                            fill="url(#resolutionGradient)"
+                          />
+                          <defs>
+                            <linearGradient id="resolutionGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0.1}/>
+                            </linearGradient>
+                          </defs>
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <Clock className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                        <p>Loading resolution data...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Mini Analytics Map */}
+                <div className="xl:col-span-1 bg-white shadow rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Geographic Overview</h3>
+                    <button
+                      onClick={() => setActiveTab('map')}
+                      className="text-sm text-indigo-600 hover:text-indigo-800"
+                    >
+                      View Full Map
+                    </button>
+                  </div>
+                  <div id="analytics-mini-map" className="h-80 bg-gray-100 rounded-lg"></div>
+                  <div className="mt-4 grid grid-cols-2 gap-4 text-center">
+                    <div>
+                      <p className="text-2xl font-bold text-blue-600">
+                        {analyticsData.geospatialData?.length || 0}
+                      </p>
+                      <p className="text-xs text-gray-500">Hotspots</p>
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold text-red-600">
+                        {analyticsData.heatmapData?.length || 0}
+                      </p>
+                      <p className="text-xs text-gray-500">Points</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Department Analysis Section */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                {/* Department Performance Matrix */}
+                <div className="bg-white shadow rounded-lg p-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Department Performance Matrix</h3>
+                  {analyticsData.complaintsByDepartment.length > 0 ? (
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={analyticsData.complaintsByDepartment.slice(0, 6)}
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={120}
+                            innerRadius={40}
+                            fill="#8884d8"
+                            dataKey="total"
+                            label={({name, value, percent}) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                            labelLine={false}
+                          >
+                            {analyticsData.complaintsByDepartment.slice(0, 6).map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={[
+                                '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'
+                              ][index % 6]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value, name) => [value, 'Total Complaints']} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <Building className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                        <p>Loading department data...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Department Efficiency Radar */}
+                <div className="bg-white shadow rounded-lg p-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Department Efficiency Analysis</h3>
+                  {analyticsData.complaintsByDepartment.length > 0 ? (
+                    <div className="h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RadialBarChart 
+                          cx="50%" 
+                          cy="50%" 
+                          innerRadius="10%" 
+                          outerRadius="80%" 
+                          data={analyticsData.complaintsByDepartment.slice(0, 5).map((dept, index) => ({
+                            ...dept,
+                            fill: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'][index],
+                            shortName: dept.name.split(' ')[0]
+                          }))}
+                        >
+                          <RadialBar 
+                            dataKey="efficiency" 
+                            cornerRadius={4} 
+                            fill="#8884d8" 
+                            label={{ position: 'insideStart', fill: '#fff', fontSize: 12 }}
+                          />
+                          <Tooltip formatter={(value, name) => [`${value}%`, 'Efficiency Score']} />
+                          <Legend />
+                        </RadialBarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-80 flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <RefreshCw className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                        <p>Loading efficiency data...</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Trend Analysis with Enhanced Visualization */}
+              <div className="bg-white shadow rounded-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">30-Day Trend Analysis</h3>
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-4 text-sm text-gray-600">
+                      <div className="flex items-center">
+                        <div className="w-3 h-3 bg-blue-500 rounded mr-2"></div>
+                        Total Complaints
+                      </div>
+                      <div className="flex items-center">
+                        <div className="w-3 h-3 bg-green-500 rounded mr-2"></div>
+                        Resolved
+                      </div>
+                      <div className="flex items-center">
+                        <div className="w-3 h-3 bg-orange-500 rounded mr-2"></div>
+                        In Progress
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {analyticsData.trendData.length > 0 ? (
+                  <div className="h-80">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={analyticsData.trendData}
+                        margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis 
+                          dataKey="date"
+                          tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          angle={-45}
+                          textAnchor="end"
+                          height={60}
+                          interval="preserveStartEnd"
+                          tick={{ fontSize: 10 }}
+                        />
+                        <YAxis tick={{ fontSize: 10 }} />
+                        <Tooltip 
+                          labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { 
+                            weekday: 'long', 
+                            year: 'numeric', 
+                            month: 'long', 
+                            day: 'numeric' 
+                          })}
+                          formatter={(value, name) => [value, name === 'total' ? 'Total Complaints' : name === 'resolved' ? 'Resolved' : 'In Progress']}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="total" 
+                          stroke="#3b82f6" 
+                          strokeWidth={3}
+                          dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                          activeDot={{ r: 6, stroke: '#3b82f6', strokeWidth: 2 }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="resolved" 
+                          stroke="#10b981" 
+                          strokeWidth={3}
+                          dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
+                          activeDot={{ r: 6, stroke: '#10b981', strokeWidth: 2 }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="in_progress" 
+                          stroke="#f59e0b" 
+                          strokeWidth={3}
+                          dot={{ fill: '#f59e0b', strokeWidth: 2, r: 4 }}
+                          activeDot={{ r: 6, stroke: '#f59e0b', strokeWidth: 2 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="h-80 flex items-center justify-center text-gray-500">
+                    <div className="text-center">
+                      <BarChart2 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <p>Loading trend data...</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Status Distribution with Chart.js */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white shadow rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Status Distribution</h3>
+                    <div className="text-sm text-gray-500">
+                      Total: {analyticsData.complaintsByStatus.reduce((sum, s) => sum + s.value, 0)}
+                    </div>
+                  </div>
+                  <div className="h-64">
+                    <canvas ref={statusChartRef}></canvas>
+                  </div>
+                  {analyticsData.complaintsByStatus.length === 0 && (
+                    <div className="h-64 flex items-center justify-center text-gray-500">
+                      Loading status data...
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white shadow rounded-lg p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">Performance Radar</h3>
+                    <button
+                      onClick={() => fetchAnalyticsData()}
+                      className="text-xs text-indigo-600 hover:text-indigo-800"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  <div className="h-64">
+                    <canvas ref={performanceChartRef}></canvas>
+                  </div>
+                  {!analyticsData.performanceMetrics && (
+                    <div className="h-64 flex items-center justify-center text-gray-500">
+                      Loading performance data...
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Department Performance with Recharts */}
+              {analyticsData.complaintsByDepartment.length > 0 && (
+                <div className="bg-white shadow rounded-lg p-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Department Performance Analysis</h3>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    <div>
+                      <h4 className="text-md font-medium text-gray-700 mb-3">Resolution Rate by Department</h4>
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={analyticsData.complaintsByDepartment.slice(0, 6)}
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={80}
+                              fill="#8884d8"
+                              dataKey="resolutionRate"
+                              label={({name, value}) => `${name}: ${value}%`}
+                            >
+                              {analyticsData.complaintsByDepartment.slice(0, 6).map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={[
+                                  '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'
+                                ][index % 6]} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(value) => `${value}%`} />
+                            <Legend />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                    
+                    <div>
+                      <h4 className="text-md font-medium text-gray-700 mb-3">Department Efficiency</h4>
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <RadialBarChart 
+                            cx="50%" 
+                            cy="50%" 
+                            innerRadius="20%" 
+                            outerRadius="90%" 
+                            data={analyticsData.complaintsByDepartment.slice(0, 4).map((dept, index) => ({
+                              ...dept,
+                              fill: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'][index]
+                            }))}
+                          >
+                            <RadialBar 
+                              dataKey="efficiency" 
+                              cornerRadius={10} 
+                              fill="#8884d8" 
+                            />
+                            <Tooltip formatter={(value) => [`${value}%`, 'Efficiency']} />
+                            <Legend />
+                          </RadialBarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Department Table */}
+                  <div className="mt-6 overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Department
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Total Complaints
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Resolution Rate
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Avg Resolution Time
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Efficiency Score
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {analyticsData.complaintsByDepartment.map((dept) => (
+                          <tr key={dept.id} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                              {dept.name}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {dept.total}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                dept.resolutionRate >= 80 ? 'bg-green-100 text-green-800' :
+                                dept.resolutionRate >= 60 ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                {dept.resolutionRate}%
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              {dept.avgResolutionTime > 0 ? `${dept.avgResolutionTime.toFixed(1)}h` : 'N/A'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              <div className="flex items-center">
+                                <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
+                                  <div 
+                                    className={`h-2 rounded-full ${
+                                      dept.efficiency >= 90 ? 'bg-green-500' :
+                                      dept.efficiency >= 70 ? 'bg-yellow-500' :
+                                      'bg-red-500'
+                                    }`}
+                                    style={{ width: `${Math.min(dept.efficiency, 100)}%` }}
+                                  ></div>
+                                </div>
+                                <span className="text-xs font-medium text-gray-900">
+                                  {dept.efficiency}%
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Geographic Analytics */}
+              {analyticsData.geospatialData.length > 0 && (
+                <div className="bg-white shadow rounded-lg p-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Geographic Hotspots Analysis</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <p className="text-2xl font-bold text-blue-600">
+                        {analyticsData.geospatialData.length}
+                      </p>
+                      <p className="text-sm text-blue-600">Active Clusters</p>
+                    </div>
+                    <div className="text-center p-4 bg-red-50 rounded-lg">
+                      <p className="text-2xl font-bold text-red-600">
+                        {analyticsData.densityAnalysis?.filter(d => d.density === 'high').length || 0}
+                      </p>
+                      <p className="text-sm text-red-600">High Density Areas</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <p className="text-2xl font-bold text-green-600">
+                        {analyticsData.heatmapData?.length || 0}
+                      </p>
+                      <p className="text-sm text-green-600">Geolocated Points</p>
+                    </div>
+                  </div>
+                  
+                  {/* Hotspot Table */}
+                  <div className="mt-4">
+                    <h4 className="text-md font-medium text-gray-900 mb-2">Top Complaint Clusters</h4>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                              Cluster
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                              Location
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                              Total
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                              Status Breakdown
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                              Top Category
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {analyticsData.geospatialData.slice(0, 5).map((cluster, index) => (
+                            <tr key={index} className="hover:bg-gray-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                #{index + 1}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {cluster.center.lat.toFixed(4)}, {cluster.center.lng.toFixed(4)}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {cluster.totalComplaints}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div className="flex space-x-2">
+                                  <span className="bg-red-100 text-red-800 px-2 py-1 rounded text-xs">
+                                    O: {cluster.statusBreakdown.open}
+                                  </span>
+                                  <span className="bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs">
+                                    P: {cluster.statusBreakdown.in_progress}
+                                  </span>
+                                  <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-xs">
+                                    R: {cluster.statusBreakdown.resolved}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {Object.entries(cluster.categories).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Export Controls */}
+              <div className="bg-white shadow rounded-lg p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Export Analytics Data</h3>
+                <div className="flex flex-wrap gap-4">
+                  <button
+                    onClick={() => exportAnalyticsData('summary')}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Export Summary Report
+                  </button>
+                  <button
+                    onClick={() => exportAnalyticsData('detailed')}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Export Detailed Analytics
+                  </button>
+                  <button
+                    onClick={() => exportAnalyticsData('geospatial')}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Export Geographic Data
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Settings Tab */}

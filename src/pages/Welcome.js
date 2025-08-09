@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Menu, Map, AlertTriangle, User, Mail, Lock, Eye, EyeOff, ChevronRight, MapPin, BarChart2, Filter, Calendar, Clock, Image, Route, Facebook, Twitter, Instagram, Github, Linkedin } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { redirectToDashboard } from '../utils/roleBasedRouting';
 
 // Main App Component
 export default function LandingPage() {
@@ -33,7 +34,8 @@ export default function LandingPage() {
     const checkUser = async () => {
       const { data } = await supabase.auth.getSession();
       if (data.session) {
-        navigate('/dashboard');
+        // Redirect to appropriate dashboard based on role
+        await redirectToDashboard(navigate);
       }
     };
     checkUser();
@@ -90,8 +92,8 @@ export default function LandingPage() {
 
       if (error) throw error;
       
-      // Redirect to dashboard on successful login
-      navigate('/dashboard');
+      // Redirect to appropriate dashboard based on role
+      await redirectToDashboard(navigate);
     } catch (error) {
       console.error('Error logging in:', error);
       setAuthError(error.message || 'Failed to log in. Please check your credentials.');

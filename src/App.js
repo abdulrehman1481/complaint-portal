@@ -5,8 +5,11 @@ import { supabase } from './supabaseClient';
 import Welcome from './pages/Welcome';
 import UserDashboard from './pages/UserDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import DepartmentAdminDashboard from './pages/DepartmentAdminDashboard';
+import FieldAgentDashboard from './pages/FieldAgentDashboard';
 import Dashboard from './pages/Dashboard';
 import AuthGuard from './components/AuthGuard';
+import DashboardRedirect from './components/DashboardRedirect';
 import { checkForInvitationInURL } from './utils/adminUtils';
 import AdminCreationPage from './pages/AdminCreationPage';
 import ReportComplaint from './pages/ReportComplaint';
@@ -51,6 +54,13 @@ function App() {
             </AuthGuard>
           } />
 
+          {/* Smart dashboard redirect based on role */}
+          <Route path="/dashboard-redirect" element={
+            <AuthGuard allowedRoles={['Public User', 'Field Agent', 'Department Admin', 'Super Admin']}>
+              <DashboardRedirect />
+            </AuthGuard>
+          } />
+
           <Route path="/report-complaint" element={
             <AuthGuard allowedRoles={['Public User', 'Field Agent', 'Department Admin', 'Super Admin']}>
               <ReportComplaint />
@@ -73,8 +83,20 @@ function App() {
           
           {/* Admin routes */}
           <Route path="/admin" element={
-            <AuthGuard allowedRoles={['Department Admin', 'Super Admin']}>
+            <AuthGuard allowedRoles={['Super Admin']}>
               <AdminDashboard />
+            </AuthGuard>
+          } />
+
+          <Route path="/department-admin" element={
+            <AuthGuard allowedRoles={['Department Admin']}>
+              <DepartmentAdminDashboard />
+            </AuthGuard>
+          } />
+
+          <Route path="/field-agent" element={
+            <AuthGuard allowedRoles={['Field Agent']}>
+              <FieldAgentDashboard />
             </AuthGuard>
           } />
 

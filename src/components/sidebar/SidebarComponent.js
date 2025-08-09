@@ -171,7 +171,7 @@ const handleComplaintClick = (complaint) => {
   };
 
   return (
-    <div className="w-80 bg-white border-r border-gray-200 flex flex-col h-full">
+    <div className="w-80 bg-white border-r border-gray-200 flex flex-col h-full z-[1050]">
       {/* Sidebar header */}
       <div className="px-4 py-3 flex justify-between items-center border-b border-gray-200">
         <h2 className="text-lg font-medium">Map Tools</h2>

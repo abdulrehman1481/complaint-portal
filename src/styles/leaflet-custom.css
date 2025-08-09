@@ -1,0 +1,390 @@
+/* Custom Leaflet Map Styles */
+
+/* Fix for Leaflet marker icons */
+.leaflet-container .leaflet-marker-pane img {
+  max-width: none;
+}
+
+/* Map container z-index management */
+.leaflet-container {
+  z-index: 1 !important;
+}
+
+/* Marker pane z-index - ensure markers appear above map tiles */
+.leaflet-marker-pane {
+  z-index: 1100 !important;
+}
+
+/* Force all marker elements to highest z-index - SELECTIVE */
+.leaflet-marker-pane .leaflet-marker-icon,
+.leaflet-marker-pane .complaint-marker {
+  z-index: 1600 !important;
+}
+
+.leaflet-shadow-pane {
+  z-index: 500 !important;
+}
+
+/* Complaint markers with high z-index */
+.complaint-marker {
+  z-index: 1500 !important;
+  position: relative !important;
+}
+
+.complaint-marker > div {
+  z-index: 1501 !important;
+}
+
+/* Marker clusters */
+.marker-cluster {
+  z-index: 1502 !important;
+}
+
+.marker-cluster-small {
+  background-color: rgba(181, 226, 140, 0.6);
+}
+
+.marker-cluster-medium {
+  background-color: rgba(241, 211, 87, 0.6);
+}
+
+.marker-cluster-large {
+  background-color: rgba(253, 156, 115, 0.6);
+}
+
+/* User location marker */
+.user-location-marker {
+  z-index: 1003 !important;
+}
+
+/* Leaflet controls z-index */
+.leaflet-control-container {
+  z-index: 1000 !important;
+}
+
+.leaflet-control {
+  z-index: 1000 !important;
+}
+
+/* Popup z-index management */
+.leaflet-popup-pane {
+  z-index: 1200 !important;
+}
+
+.leaflet-popup {
+  z-index: 1200 !important;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  z-index: 1200 !important;
+}
+
+.leaflet-popup-tip {
+  z-index: 1200 !important;
+}
+
+/* Custom popup styling */
+.custom-popup .leaflet-popup-content-wrapper {
+  padding: 0;
+  border-radius: 8px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: white;
+  max-width: 320px !important;
+  min-width: 250px !important;
+}
+
+.custom-popup .leaflet-popup-content {
+  margin: 0;
+  padding: 0;
+  width: auto !important;
+  max-width: 320px;
+  min-width: 280px;
+}
+
+.complaint-popup {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Drawing controls z-index */
+.leaflet-draw-toolbar {
+  margin-top: 10px;
+  z-index: 1005 !important;
+}
+
+.leaflet-draw-actions {
+  z-index: 1005 !important;
+}
+
+/* Marker cluster z-index - REMOVED conflicting lower z-index */
+/* .leaflet-marker-pane z-index is set higher up in the file */
+
+.leaflet-marker-icon {
+  z-index: 1600 !important;
+}
+
+/* Custom marker styles */
+.custom-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* User location marker - CONSOLIDATED */
+.user-location-marker {
+  z-index: 1003 !important;
+  position: relative;
+}
+
+/* Ensure map containers have proper dimensions */
+.map-container {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Leaflet map container isolation */
+.leaflet-container,
+.leaflet-container canvas,
+.leaflet-container svg {
+  position: relative;
+  z-index: 1 !important;
+}
+
+/* Force high z-index for critical marker elements - SELECTIVE */
+.leaflet-marker-icon,
+.complaint-marker {
+  z-index: 1600 !important;
+}
+
+/* Override for important elements that need higher z-index */
+.leaflet-popup-pane *,
+.leaflet-tooltip-pane *,
+.leaflet-control-container * {
+  z-index: 1000 !important;
+}
+
+.complaint-popup {
+  font-family: inherit;
+}
+
+.complaint-popup .popup-title {
+  color: #1f2937;
+  margin-bottom: 8px;
+}
+
+.complaint-popup .popup-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+/* Drawing controls customization */
+.leaflet-draw-toolbar {
+  margin-top: 10px;
+}
+
+/* Cluster styles */
+.marker-cluster-small {
+  background-color: rgba(181, 226, 140, 0.6);
+}
+
+.marker-cluster-small div {
+  background-color: rgba(110, 204, 57, 0.6);
+}
+
+.marker-cluster-medium {
+  background-color: rgba(241, 211, 87, 0.6);
+}
+
+.marker-cluster-medium div {
+  background-color: rgba(240, 194, 12, 0.6);
+}
+
+.marker-cluster-large {
+  background-color: rgba(253, 156, 115, 0.6);
+}
+
+.marker-cluster-large div {
+  background-color: rgba(241, 128, 23, 0.6);
+}
+
+/* Status badge styles for complaint popups */
+.bg-red-100 {
+  background-color: #fef2f2;
+}
+
+.text-red-800 {
+  color: #991b1b;
+}
+
+.bg-yellow-100 {
+  background-color: #fefce8;
+}
+
+.text-yellow-800 {
+  color: #854d0e;
+}
+
+.bg-green-100 {
+  background-color: #f0fdf4;
+}
+
+.text-green-800 {
+  color: #166534;
+}
+
+/* Additional z-index fixes for various Leaflet elements */
+.leaflet-tooltip {
+  z-index: 1150 !important;
+}
+
+.leaflet-tooltip-pane {
+  z-index: 1150 !important;
+}
+
+.leaflet-shadow-pane {
+  z-index: 500 !important;
+}
+
+.leaflet-overlay-pane {
+  z-index: 400 !important;
+}
+
+.leaflet-tile-pane {
+  z-index: 200 !important;
+}
+
+/* Force tile layers to stay at the bottom */
+.leaflet-tile-pane *,
+.leaflet-tile,
+.leaflet-layer {
+  z-index: 200 !important;
+}
+
+/* Ensure user location marker stays visible */
+.user-location-marker {
+  z-index: 1000 !important;
+  position: relative;
+}
+
+/* Fix for marker clusters */
+.leaflet-cluster-anim .leaflet-marker-icon,
+.leaflet-cluster-anim .leaflet-marker-shadow {
+  z-index: 700 !important;
+}
+
+/* Drawing tools styling */
+.leaflet-draw-draw-polygon,
+.leaflet-draw-draw-polyline,
+.leaflet-draw-draw-rectangle,
+.leaflet-draw-draw-circle,
+.leaflet-draw-draw-marker {
+  z-index: 1005 !important;
+}
+
+/* Enhanced drawing controls styling */
+.leaflet-draw-toolbar {
+  z-index: 1005 !important;
+  background: white;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.leaflet-draw-toolbar-top {
+  margin-top: 10px;
+}
+
+.leaflet-draw-section {
+  border-radius: 4px;
+}
+
+.leaflet-draw-actions {
+  z-index: 1006 !important;
+  background: white;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.leaflet-draw-actions a {
+  background: white;
+  border: 1px solid #ccc;
+  color: #333;
+}
+
+.leaflet-draw-actions a:hover {
+  background: #f0f0f0;
+}
+
+/* Drawn shapes styling */
+.leaflet-interactive {
+  z-index: 1300 !important;
+}
+
+/* Drawing overlay enhancements */
+.leaflet-overlay-pane svg {
+  z-index: 1300 !important;
+}
+
+.leaflet-overlay-pane path {
+  z-index: 1301 !important;
+}
+
+/* Drawing guides and measurements */
+.leaflet-draw-tooltip {
+  z-index: 1150 !important;
+  background: rgba(0, 0, 0, 0.8) !important;
+  color: white !important;
+  border-radius: 4px !important;
+  padding: 4px 8px !important;
+}
+
+/* Measurement tooltip styling */
+.leaflet-draw-tooltip {
+  z-index: 1150 !important;
+}
+
+.leaflet-tooltip-left:before {
+  border-right-color: rgba(0, 0, 0, 0.8) !important;
+}
+
+.leaflet-tooltip-right:before {
+  border-left-color: rgba(0, 0, 0, 0.8) !important;
+}
+
+/* Ensure heatmap stays below markers */
+.leaflet-heatmap-layer {
+  z-index: 300 !important;
+}
+
+/* Force marker icons to have high z-index */
+.leaflet-marker-icon {
+  z-index: 1600 !important;
+}
+
+/* Force marker shadows to stay below icons but above map */
+.leaflet-marker-shadow {
+  z-index: 1599 !important;
+}
+
+/* Ensure complaint markers are fully visible and opaque - CONSOLIDATED */
+.complaint-marker {
+  z-index: 1500 !important;
+  position: relative !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: block !important;
+}
+
+/* Ensure all marker types are visible */
+.leaflet-marker-icon.complaint-marker,
+.leaflet-marker-icon[src*="complaint"] {
+  opacity: 1 !important;
+  visibility: visible !important;
+  z-index: 1600 !important;
+}

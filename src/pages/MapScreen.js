@@ -6,17 +6,23 @@ import {
 } from 'lucide-react';
 
 // Import components
-import MapComponent from '../components/map/MapComponent';
+import LeafletMapComponent from '../components/map/LeafletMapComponent';
 import SidebarComponent from '../components/sidebar/SidebarComponent';
 import MapControls from '../components/map/MapControls';
-import ComplaintPopup from '../components/map/ComplaintPopup';
-import DrawingInstructions from '../components/map/DrawingInstructions';
-import BufferControl from '../components/map/BufferControl';
 import NearbyComplaintsPanel from '../components/map/NearbyComplaintsPanel';
+import DrawingInstructions from '../components/map/DrawingInstructions';
 import * as turf from '@turf/turf';
 import { parseLocation } from '../utils/locationFormatter';
-import { canAccessAnalysisTools } from '../utils/userPermissions';
+import { canAccessAnalysisTools, canAccessDrawingTools } from '../utils/userPermissions';
+import { 
+  isWithinAllowedArea, 
+  validateComplaintLocation, 
+  getServiceAreaCenter, 
+  getServiceAreaBounds,
+  enforceLocationGeofencing 
+} from '../utils/geofencing';
 import '../styles/map-custom.css';
+import '../styles/leaflet-custom.css';
 import { getCachedLocationName } from '../utils/locationUtils';
 
 // Add this function to get user location
@@ -63,14 +69,46 @@ const MapScreen = () => {
   const [showControls, setShowControls] = useState(true);
   const [categories, setCategories] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [showBufferControl, setShowBufferControl] = useState(false);
   const [nearbyComplaintsInfo, setNearbyComplaintsInfo] = useState(null);
+  
+  // Location tracking state
+  const [isLocationTracking, setIsLocationTracking] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [nearbyComplaints, setNearbyComplaints] = useState([]);
+  const [nearbyRadius, setNearbyRadius] = useState(1000);
+
+  // Handle complaint details view
+  const handleViewComplaintDetails = useCallback((complaintId) => {
+    navigate(`/complaint/${complaintId}`);
+  }, [navigate]);
+
+  // Add event listener for complaint popup view details
+  useEffect(() => {
+    const handleComplaintDetailsEvent = (event) => {
+      if (event.detail && event.detail.id) {
+        handleViewComplaintDetails(event.detail.id);
+      }
+    };
+
+    window.addEventListener('viewComplaintDetails', handleComplaintDetailsEvent);
+    
+    return () => {
+      window.removeEventListener('viewComplaintDetails', handleComplaintDetailsEvent);
+    };
+  }, [handleViewComplaintDetails]); // meters
+  
+  // Analysis state
+  const [analysisResults, setAnalysisResults] = useState(null);
+  const [isAnalysisInProgress, setIsAnalysisInProgress] = useState(false);
+  const [showBufferControl, setShowBufferControl] = useState(false);
 
   // Map configuration options
   const [mapConfig, setMapConfig] = useState({
     style: 'mapbox://styles/mapbox/streets-v11',
-    latitude: 40.7128, // Default location (will be replaced with user location)
-    longitude: -74.0060, // Default location (will be replaced with user location)
+    center: {
+      lat: 33.6, // Default to service area center (RWP/ISB)
+      lng: 73.1  // Default to service area center (RWP/ISB)
+    },
     zoom: 12,
     showHeatmap: false,
     showClusters: true, // Default to showing clusters
@@ -98,32 +136,369 @@ const MapScreen = () => {
     mapRef.current = mapInstance;
   };
 
+  // Location tracking handlers
+  const handleStartLocationTracking = useCallback(() => {
+    if (mapRef.current?.startLocationTracking) {
+      mapRef.current.startLocationTracking();
+      setIsLocationTracking(true);
+    }
+  }, []);
+
+  const handleStopLocationTracking = useCallback(() => {
+    if (mapRef.current?.stopLocationTracking) {
+      mapRef.current.stopLocationTracking();
+      setIsLocationTracking(false);
+      setUserLocation(null);
+      setNearbyComplaints([]);
+    }
+  }, []);
+
+  const handleCenterOnUser = useCallback(() => {
+    if (mapRef.current?.centerMapOnUser) {
+      mapRef.current.centerMapOnUser();
+    }
+  }, []);
+
+  const handleNearbyComplaintsUpdate = useCallback((nearby) => {
+    setNearbyComplaints(nearby);
+  }, []);
+
+  const handleUserLocationUpdate = useCallback((location) => {
+    setUserLocation(location);
+  }, []);
+
+  // Analysis and drawing handlers
+  const handleAnalysisResults = useCallback((results) => {
+    setAnalysisResults(results);
+    setIsAnalysisInProgress(false);
+  }, []);
+
+  const handleClearAnalysis = useCallback(() => {
+    setAnalysisResults(null);
+    setIsAnalysisInProgress(false);
+    
+    // Clear drawn items from map
+    if (mapRef.current?.drawnItemsRef?.current) {
+      mapRef.current.drawnItemsRef.current.clearLayers();
+    }
+  }, []);
+
+  const userHasAnalysisAccess = useCallback(() => {
+    // Only allow admins to access drawing tools and spatial analysis
+    return canAccessAnalysisTools(user);
+  }, [user]);
+
+  const userHasDrawingAccess = useCallback(() => {
+    // Only allow admins to access drawing tools
+    return canAccessDrawingTools(user);
+  }, [user]);
+
+  const toggleDrawingMode = useCallback((mode) => {
+    // Check if user has permission for drawing tools
+    if (mode !== null && !userHasDrawingAccess()) {
+      alert('You do not have permission to use drawing tools. Only administrators can access spatial analysis features.');
+      return;
+    }
+    
+    console.log(`Toggling drawing mode: ${mode}`);
+    
+    // Make sure the map ref exists
+    if (!mapRef.current) {
+      console.error("Map reference not available");
+      return;
+    }
+    
+    try {
+      // Update drawing state first
+      if (mode === null) {
+        setDrawingState({
+          active: false,
+          mode: null,
+          instructions: ''
+        });
+        setMapConfig(prev => ({ ...prev, drawingMode: null }));
+        
+        // Disable drawing on map
+        if (mapRef.current.disableDrawingMode) {
+          mapRef.current.disableDrawingMode();
+        }
+        return;
+      }
+      
+      // Set drawing instructions
+      let instructions = '';
+      switch (mode) {
+        case 'polygon':
+          instructions = 'Click on the map to place points. Double-click to complete the polygon.';
+          break;
+        case 'circle':
+          instructions = 'Click and drag to create a circle for radius analysis.';
+          break;
+        case 'rectangle':
+          instructions = 'Click and drag to create a rectangle for area analysis.';
+          break;
+        case 'marker':
+          instructions = 'Click anywhere on the map to place a marker.';
+          break;
+        default:
+          instructions = `Drawing ${mode} mode active`;
+      }
+      
+      // Update drawing state
+      setDrawingState({
+        active: true,
+        mode,
+        instructions
+      });
+      
+      // Update config
+      setMapConfig(prev => ({ ...prev, drawingMode: mode }));
+      
+      // Enable drawing mode on map
+      if (mapRef.current.enableDrawingMode) {
+        mapRef.current.enableDrawingMode(mode);
+        console.log(`Drawing mode ${mode} activated on map`);
+      } else {
+        console.error("Map reference doesn't have enableDrawingMode method");
+      }
+    } catch (error) {
+      console.error("Error toggling drawing mode:", error);
+      setDrawingState({
+        active: false,
+        mode: null,
+        instructions: ''
+      });
+    }
+  }, [userHasDrawingAccess]);
+
+  // Enhanced version of toggleDrawingMode with additional features
+  const enhancedToggleDrawingMode = useCallback((mode) => {
+    if (mode !== null && !userHasDrawingAccess()) {
+      alert('You do not have permission to use drawing tools. Only administrators can access spatial analysis features.');
+      return;
+    }
+    
+    // Use the existing toggleDrawingMode function
+    toggleDrawingMode(mode);
+    
+    // Additional enhancements for buffer control
+    if (mode === 'circle' || mode === 'polygon') {
+      // Show buffer control panel for these modes
+      setShowBufferControl(true);
+    } else {
+      setShowBufferControl(false);
+    }
+  }, [toggleDrawingMode, userHasDrawingAccess]);
+
+  const runSpatialAnalysis = useCallback((analysisType) => {
+    if (!userHasAnalysisAccess()) {
+      alert('You do not have permission to use spatial analysis tools. Only administrators can access these features.');
+      return;
+    }
+
+    if (!mapRef.current) {
+      alert('Map not fully initialized yet. Please try again in a moment.');
+      return;
+    }
+    
+    try {
+      switch (analysisType) {
+        case 'countPoints':
+          if (mapRef.current.countPointsInPolygon) {
+            const count = mapRef.current.countPointsInPolygon();
+            if (count !== undefined) {
+              // Update map config to show analysis
+              setMapConfig(prev => ({
+                ...prev,
+                showAnalysis: true
+              }));
+              console.log(`Analysis found ${count} complaints in the selected area`);
+            }
+          } else {
+            throw new Error('Count points analysis method not available');
+          }
+          break;
+          
+        case 'averageDistance':
+          if (mapRef.current.calculateAverageDistance) {
+            const averageDist = mapRef.current.calculateAverageDistance();
+            if (averageDist !== undefined) {
+              // Update map config to show analysis
+              setMapConfig(prev => ({
+                ...prev,
+                showAnalysis: true
+              }));
+              console.log(`Average distance between complaints: ${averageDist.toFixed(2)} km`);
+            }
+          } else {
+            throw new Error('Distance analysis method not available');
+          }
+          break;
+          
+        case 'density':
+          if (mapRef.current.calculateDensity) {
+            const results = mapRef.current.calculateDensity();
+            if (results) {
+              // Enable heatmap to show density
+              setMapConfig(prev => ({
+                ...prev,
+                showHeatmap: true,
+                showAnalysis: true
+              }));
+            }
+          } else {
+            throw new Error('Density analysis method not available');
+          }
+          break;
+          
+        case 'buffer':
+          // Create buffer with default distance
+          if (mapRef.current?.createBuffer) {
+            mapRef.current.createBuffer(500); // 500m default
+          }
+          break;
+          
+        case 'clearAnalysis':
+          if (mapRef.current?.clearAnalysisLayers) {
+            mapRef.current.clearAnalysisLayers();
+            setMapConfig(prev => ({
+              ...prev,
+              showAnalysis: false
+            }));
+          }
+          break;
+          
+        default:
+          alert('Unknown analysis type: ' + analysisType);
+      }
+    } catch (err) {
+      console.error('Error running spatial analysis:', err);
+      alert('Error running analysis: ' + (err.message || 'Please try again.'));
+    }
+  }, [userHasAnalysisAccess]);
+
+  const enhancedRunSpatialAnalysis = useCallback(async (type, params = {}) => {
+    setIsAnalysisInProgress(true);
+    
+    try {
+      // Use map reference to run analysis
+      if (mapRef.current?.runSpatialAnalysis) {
+        const results = await mapRef.current.runSpatialAnalysis(type, params);
+        setAnalysisResults(results);
+      } else if (runSpatialAnalysis) {
+        await runSpatialAnalysis(type, params);
+      }
+    } catch (error) {
+      console.error('Analysis error:', error);
+    } finally {
+      setIsAnalysisInProgress(false);
+    }
+  }, [runSpatialAnalysis]);
+
+  const handleNearbyRadiusChange = useCallback((radius) => {
+    setNearbyRadius(radius);
+    if (mapRef.current?.setNearbyRadius) {
+      mapRef.current.setNearbyRadius(radius);
+    }
+  }, []);
+
+  // Helper function to calculate distance between two points
+  const calculateDistance = useCallback((lat1, lon1, lat2, lon2) => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // Distance in meters
+  }, []);
+
   useEffect(() => {
-    // Get user location when the component mounts
+    // Get user location when the component mounts with geofencing
     const setInitialLocation = async () => {
       try {
         const location = await getUserLocation();
         console.log('Got user location:', location);
         
-        // Update map configuration with user's location
-        setMapConfig(prevConfig => ({
-          ...prevConfig,
-          latitude: location.latitude,
-          longitude: location.longitude
-        }));
+        // Check if user location is within allowed area (RWP/ISB)
+        const geofenceResult = enforceLocationGeofencing(location);
         
-        // If map is already loaded, fly to the user's location
-        if (mapRef.current && mapLoaded) {
+        if (!geofenceResult.allowed) {
+          console.warn('User location outside service area:', geofenceResult.message);
+          
+          // Use service area center as fallback
+          const serviceCenter = getServiceAreaCenter();
+          const fallbackLocation = {
+            latitude: serviceCenter[1],
+            longitude: serviceCenter[0]
+          };
+          
+          // Show user a notification about geofencing
+          if (geofenceResult.code === 'OUTSIDE_SERVICE_AREA') {
+            alert(`${geofenceResult.message}\n\nMap will be centered on the service area (Rawalpindi/Islamabad).`);
+          }
+          
+          // Update map configuration with service area center
+          setMapConfig(prevConfig => ({
+            ...prevConfig,
+            center: {
+              lat: fallbackLocation.latitude,
+              lng: fallbackLocation.longitude
+            }
+          }));
+          
+          location.latitude = fallbackLocation.latitude;
+          location.longitude = fallbackLocation.longitude;
+        } else {
+          console.log(`User location validated: ${geofenceResult.message}`);
+          
+          // Update map configuration with user's location
+          setMapConfig(prevConfig => ({
+            ...prevConfig,
+            center: {
+              lat: location.latitude,
+              lng: location.longitude
+            }
+          }));
+        }
+        
+        // If map is already loaded, center it on the location
+        if (mapRef.current && mapLoaded && location) {
           try {
-            mapRef.current.flyTo(location.longitude, location.latitude, 14);
-            console.log('Map centered on user location');
+            // Use the proper flyTo method for Leaflet (latitude first, then longitude)
+            if (mapRef.current.flyTo) {
+              mapRef.current.flyTo(location.latitude, location.longitude, 14);
+              console.log('Map centered on validated location');
+            } else if (mapRef.current.setView) {
+              mapRef.current.setView([location.latitude, location.longitude], 14);
+              console.log('Map view set to validated location');
+            }
           } catch (error) {
-            console.error('Error centering map on user location:', error);
+            console.error('Error centering map on location:', error);
           }
         }
       } catch (error) {
-        console.warn('Could not get user location, using default:', error);
-        // Continue with default coordinates
+        console.warn('Could not get user location, using service area center:', error);
+        
+        // Use service area center as fallback
+        const serviceCenter = getServiceAreaCenter();
+        const fallbackLocation = {
+          latitude: serviceCenter[1],
+          longitude: serviceCenter[0]
+        };
+        
+        setMapConfig(prevConfig => ({
+          ...prevConfig,
+          center: {
+            lat: fallbackLocation.latitude,
+            lng: fallbackLocation.longitude
+          }
+        }));
       }
     };
     
@@ -213,51 +588,14 @@ useEffect(() => {
     if (hasLocationNames) {
       console.log('Location names loaded, updating map data');
       
-      // Make sure we update the map data in the MapComponent
-      // We need to pass the complaints to any method that will update the GeoJSON source
+      // For Leaflet, we need to update the markers directly
       try {
-        // Get the map source and update it directly
-        const map = mapRef.current;
-        if (map.updateMapData) {
-          map.updateMapData(complaints);
+        if (mapRef.current && typeof mapRef.current.updateComplaintsData === 'function') {
+          // Use the proper Leaflet update method
+          mapRef.current.updateComplaintsData(complaints);
+          console.log(`Updated Leaflet map with ${complaints.length} complaints`);
         } else {
-          // Fallback approach if the method isn't available
-          // This accesses the map instance directly (not ideal but works as fallback)
-          const mapInstance = map.getMap?.();
-          if (mapInstance) {
-            const source = mapInstance.getSource('complaints');
-            if (source) {
-              // Create GeoJSON features from complaints
-              const features = complaints
-                .filter(c => c.coordinates && c.coordinates.length === 2)
-                .map(complaint => ({
-                  type: 'Feature',
-                  geometry: {
-                    type: 'Point',
-                    coordinates: complaint.coordinates
-                  },
-                  properties: {
-                    id: complaint.id,
-                    title: complaint.title || 'Untitled Complaint',
-                    status: complaint.status || 'unknown',
-                    category_id: complaint.category_id,
-                    category_name: complaint.categories?.name || 'Uncategorized',
-                    color: getStatusColor(complaint.status),
-                    created_at: complaint.created_at || '',
-                    reported_by_name: complaint.reported_by_name || 'Unknown User',
-                    anonymous: complaint.anonymous ? 'true' : 'false',
-                    location_name: complaint.locationName || 'Loading location...'
-                  }
-                }));
-                
-              // Update the GeoJSON source
-              source.setData({
-                type: 'FeatureCollection',
-                features
-              });
-              console.log(`Updated map with ${features.length} features`);
-            }
-          }
+          console.warn('updateComplaintsData method not available on map reference');
         }
       } catch (err) {
         console.error('Error updating map with location names:', err);
@@ -536,7 +874,7 @@ const fetchComplaints = async (userData) => {
           parsedLocation = parseLocation(complaint.location);
         }
         
-        // Apply the parsed location if valid
+        // Apply the parsed location if valid and within service area
         if (parsedLocation && 
             parsedLocation.latitude !== undefined && 
             parsedLocation.longitude !== undefined &&
@@ -545,15 +883,29 @@ const fetchComplaints = async (userData) => {
             Math.abs(parsedLocation.latitude) <= 90 &&
             Math.abs(parsedLocation.longitude) <= 180) {
             
-          complaint.parsedLocation = parsedLocation;
-          // Store coordinates in GeoJSON format [longitude, latitude]
-          complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
-          
-          // Mark that we need to fetch a location name
-          complaint.needsLocationName = true;
+          // Check if location is within allowed service area (RWP/ISB)
+          if (isWithinAllowedArea(parsedLocation.longitude, parsedLocation.latitude)) {
+            complaint.parsedLocation = parsedLocation;
+            // Store coordinates in GeoJSON format [longitude, latitude]
+            complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
+            
+            // Mark that we need to fetch a location name
+            complaint.needsLocationName = true;
+            
+            // Add service area validation flag
+            complaint.withinServiceArea = true;
+          } else {
+            // Location is outside service area - exclude or flag
+            console.warn(`Complaint ${complaint.id} is outside service area:`, parsedLocation);
+            complaint.parsedLocation = null;
+            complaint.coordinates = null;
+            complaint.withinServiceArea = false;
+            complaint.locationNote = 'Outside service area (RWP/ISB)';
+          }
         } else {
           complaint.parsedLocation = null;
           complaint.coordinates = null;
+          complaint.withinServiceArea = false;
         }
         
         // Handle reporter information
@@ -579,12 +931,26 @@ const fetchComplaints = async (userData) => {
     ).length;
     
     console.log(`Successfully parsed locations: ${validLocations}/${processedComplaints.length}`);
+    
+    // Debug: Log a sample complaint to see structure
+    if (processedComplaints.length > 0) {
+      console.log('Sample complaint structure:', processedComplaints[0]);
+      console.log('Sample complaint coordinates:', processedComplaints[0].coordinates);
+      console.log('Sample complaint parsedLocation:', processedComplaints[0].parsedLocation);
+    }
 
-    // Set complaints first
-    setComplaints(processedComplaints);
+    // Set complaints (only those within service area)
+    const validComplaints = processedComplaints.filter(complaint => complaint.withinServiceArea !== false);
+    const excludedCount = processedComplaints.length - validComplaints.length;
+    
+    if (excludedCount > 0) {
+      console.log(`Excluded ${excludedCount} complaints outside service area (RWP/ISB)`);
+    }
+    
+    setComplaints(validComplaints);
     
     // Then start fetching location names in the background
-    fetchLocationNames(processedComplaints);
+    fetchLocationNames(validComplaints);
     
   } catch (error) {
     console.error('Error fetching complaints:', error);
@@ -626,17 +992,25 @@ const fetchLocationNames = async (complaintsList) => {
           // If we couldn't get a detailed location name, try to get at least city-level info
           if (!locationName) {
             try {
-              // Simple reverse geocoding for city-level information
+              // Simple reverse geocoding for city-level information using Nominatim
               const response = await fetch(
-                `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${process.env.REACT_APP_MAPBOX_TOKEN}&types=place,locality,neighborhood`
+                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&addressdetails=1`,
+                {
+                  headers: {
+                    'User-Agent': 'ComplaintManagementSystem/1.0'
+                  }
+                }
               );
               
               if (response.ok) {
                 const data = await response.json();
                 
                 // Extract city or general location name
-                if (data.features && data.features.length > 0) {
-                  locationName = data.features[0].text || data.features[0].place_name;
+                if (data && data.address) {
+                  const address = data.address;
+                  locationName = address.city || address.town || address.village || 
+                               address.suburb || address.neighbourhood || 
+                               data.display_name;
                   console.log(`Found general location for complaint ${complaint.id}: ${locationName}`);
                 }
               }
@@ -709,14 +1083,14 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
   try {
     setLoading(true);
     
-    // Get the map instance and verify we can get the center
+    // Get the map center using the proper Leaflet method
     let center;
     
     if (typeof mapRef.current.getCenter === 'function') {
       // Direct method on ref
       center = mapRef.current.getCenter();
     } else if (mapRef.current.getMap && typeof mapRef.current.getMap === 'function') {
-      // Get from underlying map
+      // Get from underlying Leaflet map
       const mapInstance = mapRef.current.getMap();
       if (mapInstance && typeof mapInstance.getCenter === 'function') {
         center = mapInstance.getCenter();
@@ -759,31 +1133,6 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
     
     console.log(`Found ${nearbyComplaints.length} nearby complaints within ${radius}m radius`);
     
-    // Visualize the radius on the map using our buffer function
-    if (typeof mapRef.current.enableDrawingMode === 'function') {
-      try {
-        mapRef.current.enableDrawingMode('point');
-        
-        // Wait for drawing mode to be active
-        setTimeout(() => {
-          // Try to get the underlying Draw instance
-          if (mapRef.current && mapRef.current.getMap) {
-            const map = mapRef.current.getMap();
-            if (map) {
-              // Try to create a point and buffer directly
-              try {
-                setTimeout(() => mapRef.current.createBuffer(radius), 300);
-              } catch (bufferErr) {
-                console.warn('Error creating buffer visualization:', bufferErr);
-              }
-            }
-          }
-        }, 200);
-      } catch (error) {
-        console.warn('Error setting up buffer visualization:', error);
-      }
-    }
-    
     // Show nearby complaints panel
     setNearbyComplaintsInfo({
       count: nearbyComplaints.length,
@@ -791,24 +1140,18 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
       complaints: nearbyComplaints
     });
     
-    // Try to focus map with proper error handling
+    // Try to focus map with proper error handling for Leaflet
     try {
       if (mapRef.current) {
-        // Different ways to access flyTo functionality
+        // Use Leaflet's flyTo method with proper parameters
         if (typeof mapRef.current.flyTo === 'function') {
-          mapRef.current.flyTo({
-            center: [center.lng, center.lat],
-            zoom: 14,
-            duration: 1000
-          });
+          mapRef.current.flyTo(center.lng, center.lat, 14);
         } else if (mapRef.current.getMap && typeof mapRef.current.getMap === 'function') {
           const map = mapRef.current.getMap();
           if (map && typeof map.flyTo === 'function') {
-            map.flyTo({
-              center: [center.lng, center.lat],
-              zoom: 14,
-              duration: 1000
-            });
+            map.flyTo([center.lat, center.lng], 14, { duration: 1 });
+          } else if (map && typeof map.setView === 'function') {
+            map.setView([center.lat, center.lng], 14);
           }
         }
       }
@@ -876,78 +1219,6 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
     });
   }, []);
 
-  const userHasAnalysisAccess = useCallback(() => {
-    return canAccessAnalysisTools(user);
-  }, [user]);
-
-  const toggleDrawingMode = useCallback((mode) => {
-    // Check if user has permission for analysis tools
-    if (mode !== null && !userHasAnalysisAccess()) {
-      alert('You do not have permission to use drawing tools. Please contact an administrator.');
-      return;
-    }
-    
-    console.log(`Toggling drawing mode: ${mode}`);
-    
-    // Make sure the map ref exists
-    if (!mapRef.current) {
-      console.error("Map reference not available");
-      return;
-    }
-    
-    try {
-      // First disable any current drawing mode
-      if (mapRef.current.disableDrawingMode) {
-        mapRef.current.disableDrawingMode();
-      }
-      
-      // If mode is null, we're just disabling drawing
-      if (mode === null) {
-        setMapConfig(prev => ({ ...prev, drawingMode: null }));
-        setDrawingState({
-          active: false,
-          mode: null,
-          instructions: ''
-        });
-        return;
-      }
-      
-      // Enable the specific drawing mode
-      if (mapRef.current.enableDrawingMode) {
-        // Set drawing instructions
-        let instructions = '';
-        if (mode === 'polygon') {
-          instructions = 'Click on the map to place points. Connect to the first point or double-click to complete the polygon.';
-        } else if (mode === 'point') {
-          instructions = 'Click anywhere on the map to place a point.';
-        }
-        
-        // Update drawing state first
-        setDrawingState({
-          active: true,
-          mode,
-          instructions
-        });
-        
-        // Then enable the drawing mode on the map
-        mapRef.current.enableDrawingMode(mode);
-        console.log(`Drawing mode ${mode} activated on map`);
-        
-        // Update the config
-        setMapConfig(prev => ({ ...prev, drawingMode: mode }));
-      } else {
-        console.error("Map reference doesn't have enableDrawingMode method");
-      }
-    } catch (error) {
-      console.error("Error toggling drawing mode:", error);
-      setDrawingState({
-        active: false,
-        mode: null,
-        instructions: ''
-      });
-    }
-  }, [userHasAnalysisAccess]);
-
   const createBuffer = useCallback((distance) => {
     // This needs the mapRef to be set
     if (!mapRef.current) {
@@ -969,92 +1240,6 @@ const showNearbyComplaints = useCallback(async (radius = 1000) => {
       alert('Error creating buffer: ' + (err.message || 'Please select a feature on the map first'));
     }
   }, []);
-
-  const runSpatialAnalysis = useCallback((analysisType) => {
-    if (!userHasAnalysisAccess()) {
-      alert('You do not have permission to use analysis tools. Please contact an administrator.');
-      return;
-    }
-
-    if (!mapRef.current) {
-      alert('Map not fully initialized yet. Please try again in a moment.');
-      return;
-    }
-    
-    try {
-      switch (analysisType) {
-        case 'countPoints':
-          if (mapRef.current.countPointsInPolygon) {
-            const count = mapRef.current.countPointsInPolygon();
-            if (count !== undefined) {
-              // Update map config to show analysis
-              setMapConfig(prev => ({
-                ...prev,
-                showAnalysis: true
-              }));
-              console.log(`Analysis found ${count} complaints in the selected area`);
-            }
-          } else {
-            throw new Error('Count points analysis method not available');
-          }
-          break;
-          
-        case 'averageDistance':
-          if (mapRef.current.calculateAverageDistance) {
-            const averageDist = mapRef.current.calculateAverageDistance();
-            if (averageDist !== undefined) {
-              // Update map config to show analysis
-              setMapConfig(prev => ({
-                ...prev,
-                showAnalysis: true
-              }));
-              console.log(`Average distance between complaints: ${averageDist.toFixed(2)} km`);
-            }
-          } else {
-            throw new Error('Distance analysis method not available');
-          }
-          break;
-          
-        case 'density':
-          if (mapRef.current.calculateDensity) {
-            const results = mapRef.current.calculateDensity();
-            if (results) {
-              // Enable heatmap to show density
-              setMapConfig(prev => ({
-                ...prev,
-                showHeatmap: true,
-                showAnalysis: true
-              }));
-            }
-          } else {
-            throw new Error('Density analysis method not available');
-          }
-          break;
-          
-        case 'buffer':
-          // Show buffer control panel instead of directly creating a buffer
-          setShowBufferControl(true);
-          break;
-          
-        case 'clearAnalysis':
-          if (mapRef.current.clearAnalysis) {
-            mapRef.current.clearAnalysis();
-            setMapConfig(prev => ({
-              ...prev,
-              showAnalysis: false
-            }));
-            setShowBufferControl(false);
-          }
-          break;
-          
-        default:
-          alert('Unknown analysis type: ' + analysisType);
-      }
-    } catch (err) {
-      console.error('Error running spatial analysis:', err);
-      alert('Error running analysis: ' + (err.message || 'Please try again.'));
-    }
-  }, [userHasAnalysisAccess]);
 
   const handleReportNewComplaint = useCallback(() => {
     // Store map center in localStorage for the report form
@@ -1087,25 +1272,23 @@ useEffect(() => {
             !isNaN(complaint.coordinates[1]) && 
             mapRef.current) {
           
-          // Try different approaches to fly to the coordinates
+          // For Leaflet, coordinates are [lng, lat] but we need [lat, lng]
+          const [lng, lat] = complaint.coordinates;
+          
           try {
-            // First try the flyTo method directly
+            // Use Leaflet's flyTo method with proper coordinate order
             if (mapRef.current.flyTo) {
-              mapRef.current.flyTo({
-                center: complaint.coordinates,
-                zoom: 15,
-                duration: 1000
-              });
+              mapRef.current.flyTo(lng, lat, 15);
             } 
-            // Then try to access the underlying map instance
-            else if (mapRef.current.getMap && typeof mapRef.current.getMap === 'function') {
+            // Fallback to setView if flyTo is not available
+            else if (mapRef.current.setView) {
+              mapRef.current.setView([lat, lng], 15);
+            }
+            // Last resort - access the underlying Leaflet map instance
+            else if (mapRef.current.getMap) {
               const mapInstance = mapRef.current.getMap();
               if (mapInstance && mapInstance.flyTo) {
-                mapInstance.flyTo({
-                  center: complaint.coordinates,
-                  zoom: 15,
-                  duration: 1000
-                });
+                mapInstance.flyTo([lat, lng], 15, { duration: 1 });
               }
             }
           } catch (flyError) {
@@ -1145,6 +1328,100 @@ useEffect(() => {
       }
     }
   }, [complaints, ensureComplaintsHaveValidLocations]);
+
+  // Add the missing handleDrawingComplete function to handle drawing completion events
+  const handleDrawingComplete = useCallback((drawingData) => {
+    console.log('Drawing completed:', drawingData);
+    
+    // Update drawing state
+    setDrawingState(prev => ({
+      ...prev,
+      active: false,
+      mode: null,
+      instructions: ''
+    }));
+    
+    // Trigger analysis if auto-analyze is enabled
+    if (mapConfig.autoAnalyze && drawingData.shape) {
+      setIsAnalysisInProgress(true);
+      
+      // The analysis will be handled by the map component
+      // Results will come back through handleAnalysisResults
+    }
+  }, [mapConfig.autoAnalyze]);
+
+  // Handle quick actions from MapControls
+  const handleQuickAction = useCallback(async (action, params = {}) => {
+    try {
+      switch (action) {
+        case 'centerOnUser':
+          if (userLocation && mapRef.current?.setView) {
+            mapRef.current.setView([userLocation.lat, userLocation.lng], 16);
+          }
+          break;
+          
+        case 'refreshLocation':
+          if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+              (position) => {
+                const newLocation = {
+                  lat: position.coords.latitude,
+                  lng: position.coords.longitude
+                };
+                setUserLocation(newLocation);
+                if (mapRef.current?.setView) {
+                  mapRef.current.setView([newLocation.lat, newLocation.lng], 16);
+                }
+              },
+              (error) => {
+                console.error('Error getting location:', error);
+                alert('Could not get your current location. Please check location permissions.');
+              }
+            );
+          }
+          break;
+          
+        case 'nearbyAnalysis':
+          if (userLocation && params.radius) {
+            await enhancedRunSpatialAnalysis('nearby', {
+              center: userLocation,
+              radius: params.radius
+            });
+          }
+          break;
+          
+        case 'bufferAnalysis':
+          if (userLocation && params.distance) {
+            await enhancedRunSpatialAnalysis('buffer', {
+              center: userLocation,
+              distance: params.distance
+            });
+          }
+          break;
+          
+        case 'toggleHeatMap':
+          // Toggle heat map visualization
+          if (mapRef.current?.toggleHeatMap) {
+            mapRef.current.toggleHeatMap();
+          }
+          break;
+          
+        case 'clearAll':
+          // Clear all drawn items and analysis results
+          if (mapRef.current?.drawnItemsRef?.current) {
+            mapRef.current.drawnItemsRef.current.clearLayers();
+          }
+          handleClearAnalysis();
+          break;
+          
+        default:
+          console.warn(`Unknown quick action: ${action}`);
+      }
+    } catch (error) {
+      console.error(`Error handling quick action ${action}:`, error);
+      throw error;
+    }
+  }, [userLocation, enhancedRunSpatialAnalysis, handleClearAnalysis]);
 
   return (
     <div className="h-screen flex flex-col">
@@ -1195,21 +1472,21 @@ useEffect(() => {
             handleApplyFilters={handleApplyFilters}
             toggleMapLayer={toggleMapLayer}
             toggleBaseMapStyle={toggleBaseMapStyle}
-            toggleDrawingMode={toggleDrawingMode}
+            toggleDrawingMode={enhancedToggleDrawingMode}
             createBuffer={createBuffer}
             setMapConfig={setMapConfig}
             setSelectedComplaint={setSelectedComplaint}
             user={user}
             setSidebarOpen={setSidebarOpen}
             mapRef={mapRef}
-            runSpatialAnalysis={runSpatialAnalysis}
+            runSpatialAnalysis={enhancedRunSpatialAnalysis}
           />
         )}
 
         {/* Map container */}
         <div className="flex-1 relative">
           {/* Map */}
-          <MapComponent
+          <LeafletMapComponent
             ref={mapRef}
             mapConfig={mapConfig}
             setMapLoaded={setMapLoaded}
@@ -1218,6 +1495,12 @@ useEffect(() => {
             user={user}
             departments={departments}
             onMapReady={handleMapReady}
+            onNearbyComplaintsUpdate={handleNearbyComplaintsUpdate}
+            onUserLocationUpdate={handleUserLocationUpdate}
+            onAnalysisResults={handleAnalysisResults}
+            onDrawingComplete={handleDrawingComplete}
+            showAnalysisTools={userHasAnalysisAccess()}
+            isAdmin={userHasAnalysisAccess()}
           />
 
           {/* Drawing instructions overlay */}
@@ -1229,18 +1512,51 @@ useEffect(() => {
 
           {/* Buffer control panel */}
           {showBufferControl && (
-            <BufferControl 
-              createBuffer={createBuffer}
-              onClose={() => setShowBufferControl(false)}
-              defaultDistance={mapConfig.bufferDistance}
-            />
+            <div className="absolute top-20 left-4 z-[900] bg-white p-4 rounded-lg shadow-lg border max-w-xs">
+              <h3 className="font-semibold text-gray-900 mb-3">Buffer Analysis</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Buffer Distance (meters)
+                  </label>
+                  <input
+                    type="number"
+                    defaultValue={mapConfig.bufferDistance}
+                    min="50"
+                    max="5000"
+                    step="50"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onBlur={(e) => {
+                      const distance = parseInt(e.target.value);
+                      if (distance >= 50 && distance <= 5000) {
+                        createBuffer(distance);
+                      }
+                    }}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => createBuffer(mapConfig.bufferDistance)}
+                    className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                  >
+                    Create Buffer
+                  </button>
+                  <button
+                    onClick={() => setShowBufferControl(false)}
+                    className="px-3 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 text-sm"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Map tools */}
           {!sidebarOpen && (
             <button
               onClick={() => setSidebarOpen(true)}
-              className="absolute top-4 left-4 z-10 bg-white p-2 rounded-full shadow-md hover:bg-gray-100"
+              className="absolute top-4 left-4 z-[900] bg-white p-2 rounded-full shadow-md hover:bg-gray-100"
               title="Open sidebar"
             >
               <ChevronRight className="h-5 w-5" />
@@ -1249,21 +1565,21 @@ useEffect(() => {
 
           {/* Floating controls - only visible when showControls is true */}
           {showControls && mapLoaded && (
-            <div className="absolute top-4 right-16 z-10">
+            <div className="absolute bottom-4 right-4 z-[1000]">
               <MapControls
-                mapConfig={mapConfig}
-                toggleBaseMapStyle={toggleBaseMapStyle}
-                toggleMapLayer={toggleMapLayer}
-                toggleDrawingMode={toggleDrawingMode}
-                runSpatialAnalysis={runSpatialAnalysis}
-                isAdmin={userHasAnalysisAccess()}
+                userLocation={userLocation}
+                mapRef={mapRef}
+                onDrawingModeChange={enhancedToggleDrawingMode}
+                onAnalysisRequest={enhancedRunSpatialAnalysis}
+                onQuickAction={handleQuickAction}
+                user={user}
               />
             </div>
           )}
           
           {/* Nearby complaints button for regular users */}
           {!userHasAnalysisAccess() && mapLoaded && (
-            <div className="absolute bottom-6 right-6 z-10">
+            <div className="absolute bottom-20 right-6 z-[900]">
               <button
                 onClick={() => showNearbyComplaints(1000)}
                 title="Find complaints near me"
@@ -1281,16 +1597,177 @@ useEffect(() => {
               onClose={() => setNearbyComplaintsInfo(null)}
             />
           )}
+
+          {/* Live nearby complaints panel for location tracking */}
+          {isLocationTracking && nearbyComplaints.length > 0 && (
+            <div className="absolute bottom-4 left-4 z-[900] bg-white rounded-lg shadow-lg border max-w-sm">
+              <div className="p-3 border-b bg-blue-50 rounded-t-lg">
+                <h3 className="font-semibold text-sm text-blue-800">
+                  Nearby Complaints ({nearbyComplaints.length})
+                </h3>
+                <p className="text-xs text-blue-600 truncate">Within {nearbyRadius}m of your location</p>
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {nearbyComplaints.slice(0, 5).map((complaint) => {
+                  const distance = userLocation ? Math.round(
+                    calculateDistance(
+                      userLocation.lat, userLocation.lng,
+                      complaint.latitude, complaint.longitude
+                    )
+                  ) : null;
+                  
+                  return (
+                    <div 
+                      key={complaint.id} 
+                      className="p-2 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer"
+                      onClick={() => setSelectedComplaint(complaint)}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-gray-800 truncate">
+                            {complaint.title || 'Untitled'}
+                          </p>
+                          <p className="text-xs text-gray-600 truncate">
+                            {complaint.category || 'General'}
+                          </p>
+                        </div>
+                        {distance && (
+                          <span className="text-xs text-blue-600 font-medium ml-2">
+                            {distance}m
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {nearbyComplaints.length > 5 && (
+                  <div className="p-2 text-center text-xs text-gray-500">
+                    +{nearbyComplaints.length - 5} more nearby
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Selected complaint details */}
+      {/* Selected complaint details - Enhanced */}
       {selectedComplaint && (
-        <ComplaintPopup
-          complaint={selectedComplaint}
-          onClose={() => setSelectedComplaint(null)}
-          isAdmin={user?.roles?.name === 'Super Admin' || user?.roles?.name === 'Department Admin'}
-        />
+        <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg max-w-md z-[1100] overflow-hidden">
+          <div className="flex justify-between items-center p-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+            <h3 className="font-semibold text-lg">Complaint Details</h3>
+            <button
+              onClick={() => setSelectedComplaint(null)}
+              className="text-blue-100 hover:text-white transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          
+          <div className="p-4 space-y-3">
+            {/* Status Badge */}
+            <div className="flex items-center justify-between">
+              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                selectedComplaint.status === 'open' ? 'bg-red-100 text-red-800' :
+                selectedComplaint.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
+                selectedComplaint.status === 'resolved' ? 'bg-green-100 text-green-800' :
+                'bg-gray-100 text-gray-800'
+              }`}>
+                {selectedComplaint.status?.replace('_', ' ')?.toUpperCase() || 'UNKNOWN'}
+              </span>
+              <span className="text-xs text-gray-500">#{selectedComplaint.id}</span>
+            </div>
+
+            {/* Title */}
+            <div>
+              <h4 className="font-semibold text-gray-900 text-lg leading-tight">
+                {selectedComplaint.title || 'Untitled Complaint'}
+              </h4>
+            </div>
+
+            {/* Details Grid */}
+            <div className="space-y-2 text-sm">
+              {selectedComplaint.categories?.name && (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-600 w-20">Category:</span>
+                  <span className="text-gray-900">{selectedComplaint.categories.name}</span>
+                </div>
+              )}
+
+              {selectedComplaint.priority && (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-600 w-20">Priority:</span>
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                    selectedComplaint.priority === 'high' ? 'bg-red-100 text-red-700' :
+                    selectedComplaint.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-green-100 text-green-700'
+                  }`}>
+                    {selectedComplaint.priority?.toUpperCase()}
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-start gap-2">
+                <span className="font-medium text-gray-600 w-20">Location:</span>
+                <div className="flex-1">
+                  <div className="text-gray-900">
+                    {selectedComplaint.locationName || 'Loading location...'}
+                  </div>
+                  {selectedComplaint.coordinates && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      {selectedComplaint.coordinates[1]?.toFixed(6)}, {selectedComplaint.coordinates[0]?.toFixed(6)}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-gray-600 w-20">Reporter:</span>
+                <span className="text-gray-900">
+                  {selectedComplaint.anonymous ? 'Anonymous User' : 
+                   (selectedComplaint.reported_by_name || `User #${selectedComplaint.reported_by}`)}
+                </span>
+              </div>
+
+              {selectedComplaint.created_at && (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-600 w-20">Created:</span>
+                  <span className="text-gray-900">
+                    {new Date(selectedComplaint.created_at).toLocaleString()}
+                  </span>
+                </div>
+              )}
+
+              {selectedComplaint.updated_at && selectedComplaint.updated_at !== selectedComplaint.created_at && (
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-600 w-20">Updated:</span>
+                  <span className="text-gray-900">
+                    {new Date(selectedComplaint.updated_at).toLocaleString()}
+                  </span>
+                </div>
+              )}
+
+              {selectedComplaint.description && (
+                <div className="pt-2 border-t">
+                  <span className="font-medium text-gray-600 block mb-1">Description:</span>
+                  <div className="text-gray-900 max-h-24 overflow-y-auto text-sm leading-relaxed">
+                    {selectedComplaint.description}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Action Button */}
+            <div className="pt-3 border-t">
+              <button
+                onClick={() => handleViewComplaintDetails(selectedComplaint.id)}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-md transition-colors duration-200"
+              >
+                View Full Details
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Loading indicator */}
