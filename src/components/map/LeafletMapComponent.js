@@ -84,7 +84,7 @@ const createComplaintMarker = (complaint) => {
 };
 
 const LeafletMapComponent = forwardRef(({ 
-  mapConfig = { center: { lat: 40.7128, lng: -74.0060 }, zoom: 12 }, 
+  mapConfig = { center: { lat: 33.6844, lng: 73.0479 }, zoom: 12 }, 
   setMapLoaded, 
   complaints = [], 
   user, 
@@ -106,6 +106,8 @@ const LeafletMapComponent = forwardRef(({
   const heatMapLayer = useRef(null);
   const analysisPopupRef = useRef(null);
   const navigate = useNavigate();
+  // Cache permission
+  const userCanDraw = canAccessDrawingTools(user);
 
   const [sourcesInitialized, setSourcesInitialized] = useState(false);
   const [analysisResults, setAnalysisResults] = useState(null);
@@ -541,8 +543,9 @@ const LeafletMapComponent = forwardRef(({
 
   // Enhanced analysis functions with user location integration
   const runSpatialAnalysis = useCallback(async (type, params = {}) => {
-    if (!isAdmin || !showAnalysisTools) {
-      console.warn('Analysis tools not available');
+    // Restrict heavy analysis to admins; allow 'nearby' for all users
+    if ((!isAdmin || !showAnalysisTools) && type !== 'nearby') {
+      console.warn('Analysis tools not available for this user');
       return null;
     }
 
@@ -560,8 +563,7 @@ const LeafletMapComponent = forwardRef(({
         const drawnLayers = [];
         if (drawnItemsRef.current) {
           drawnItemsRef.current.eachLayer(layer => drawnLayers.push(layer));
-        }
-        
+  }
         if (drawnLayers.length === 0) {
           throw new Error('Draw an area on the map to analyze complaints within that region');
         }
@@ -655,8 +657,7 @@ const LeafletMapComponent = forwardRef(({
           });
         });
         
-        if (points.length > 0) {
-          const collection = turf.featureCollection(points);
+  if (points.length > 0) {
           let analysisArea, analysisCenter;
           
           // Use drawn area if available, otherwise use map bounds
@@ -930,6 +931,7 @@ const LeafletMapComponent = forwardRef(({
           type: 'nearby',
           timestamp: new Date().toISOString(),
           searchRadius: searchRadius,
+          center: [userLocation.lat, userLocation.lng],
           userLocation: userLocation,
           totalNearby: nearbyComplaints.length,
           complaints: nearbyComplaints.slice(0, 20), // Limit to 20 closest
@@ -962,7 +964,7 @@ const LeafletMapComponent = forwardRef(({
           }
         } else if ((type === 'buffer' || type === 'nearby') && results.center) {
           popupPosition = { lat: results.center[0], lng: results.center[1] };
-        } else if (type === 'buffer' && userLocation) {
+        } else if ((type === 'buffer' || type === 'nearby') && userLocation) {
           popupPosition = { lat: userLocation.lat, lng: userLocation.lng };
         }
         
@@ -997,6 +999,11 @@ const LeafletMapComponent = forwardRef(({
     
     if (!drawingRef.current) {
       console.warn('Drawing controls not initialized - user may not have drawing permissions');
+      return;
+    }
+  // Extra guard: restrict drawing tools to admins
+  if (!isAdmin && !userCanDraw) {
+      console.warn('Drawing tools are restricted to administrators');
       return;
     }
     
@@ -1116,7 +1123,7 @@ const LeafletMapComponent = forwardRef(({
       console.error('Error enabling drawing mode:', error);
       setDrawingMode(null);
     }
-  }, [userLocation, runSpatialAnalysis]);
+  }, [userLocation, runSpatialAnalysis, isAdmin, userCanDraw]);
 
   const disableDrawingMode = useCallback(() => {
     setDrawingMode(null);
@@ -1180,8 +1187,8 @@ const LeafletMapComponent = forwardRef(({
       
       map.addLayer(clusterGroup);
       
-      // Initialize enhanced drawing controls for users with drawing access
-      if (showAnalysisTools || canAccessDrawingTools(user)) {
+  // Initialize enhanced drawing controls for users with drawing access
+  if (showAnalysisTools || userCanDraw) {
         try {
           const drawnItems = new L.FeatureGroup();
           map.addLayer(drawnItems);
@@ -1440,60 +1447,7 @@ const LeafletMapComponent = forwardRef(({
           }
         });
 
-        // Handle shape creation
-        map.on('draw:created', (e) => {
-          const layer = e.layer;
-          const type = e.layerType;
-          
-          console.log(`Shape created: ${type}`, layer);
-          
-          // Add the shape to the drawn items layer
-          drawnItems.addLayer(layer);
-          
-          // Generate unique ID for the shape
-          const shapeId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-          layer.shapeId = shapeId;
-          
-          // Store shape data
-          let shapeData = {
-            id: shapeId,
-            type: type,
-            layer: layer
-          };
-          
-          // Get geometry data based on shape type
-          if (type === 'polygon') {
-            shapeData.coordinates = layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng]);
-            shapeData.area = L.GeometryUtil ? L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]) : 0;
-          } else if (type === 'circle') {
-            shapeData.center = [layer.getLatLng().lat, layer.getLatLng().lng];
-            shapeData.radius = layer.getRadius();
-            shapeData.area = Math.PI * layer.getRadius() * layer.getRadius();
-          } else if (type === 'rectangle') {
-            shapeData.bounds = layer.getBounds();
-            shapeData.coordinates = [
-              [layer.getBounds().getNorth(), layer.getBounds().getWest()],
-              [layer.getBounds().getNorth(), layer.getBounds().getEast()],
-              [layer.getBounds().getSouth(), layer.getBounds().getEast()],
-              [layer.getBounds().getSouth(), layer.getBounds().getWest()]
-            ];
-          } else if (type === 'marker') {
-            shapeData.coordinates = [layer.getLatLng().lat, layer.getLatLng().lng];
-          }
-          
-          // Update drawn shapes state
-          setDrawnShapes(prev => [...prev, shapeData]);
-          
-          // Disable current drawing mode
-          setDrawingMode(null);
-          
-          // Notify parent component if callback provided
-          if (onDrawingComplete) {
-            onDrawingComplete(shapeData);
-          }
-          
-          console.log('Drawing completed:', shapeData);
-        });
+  // Note: duplicate draw:created handler removed to prevent double-add and duplicate analysis
         
         drawingRef.current = drawControl;
         drawnItemsRef.current = drawnItems;
@@ -1558,11 +1512,34 @@ const LeafletMapComponent = forwardRef(({
         window.removeEventListener('viewComplaintDetails', handleViewDetails);
       };
     }
-  }, [mapInstance.current, sourcesInitialized, navigate]);
+  }, [sourcesInitialized, navigate]);
 
   // Enhanced API for parent components
   useImperativeHandle(ref, () => ({
     getMap: () => mapInstance.current,
+    getCenter: () => (mapInstance.current ? mapInstance.current.getCenter() : null),
+    flyTo: (lat, lng, zoom = 14, options = {}) => {
+      if (!mapInstance.current) return;
+      try {
+        if (Array.isArray(lat)) {
+          mapInstance.current.flyTo([lat[0], lat[1]], lng ?? 14, zoom || options);
+        } else if (typeof lat === 'object' && lat) {
+          mapInstance.current.flyTo([lat.lat, lat.lng], lng ?? 14, zoom || options);
+        } else {
+          mapInstance.current.flyTo([lat, lng], zoom, options);
+        }
+      } catch (e) {
+        try {
+          if (Array.isArray(lat)) {
+            mapInstance.current.setView([lat[0], lat[1]], typeof lng === 'number' ? lng : zoom);
+          } else if (typeof lat === 'object' && lat) {
+            mapInstance.current.setView([lat.lat, lat.lng], typeof lng === 'number' ? lng : zoom);
+          } else {
+            mapInstance.current.setView([lat, lng], zoom);
+          }
+        } catch {}
+      }
+    },
     
     fitBounds: (bounds) => {
       if (mapInstance.current && bounds) {
@@ -1710,24 +1687,26 @@ const LeafletMapComponent = forwardRef(({
       <div ref={mapContainer} className="h-full w-full" />
       
       {/* Enhanced Heat Map Toggle with Location Integration */}
-      {isAdmin && complaints.length > 0 && (
+      {(isAdmin || userLocation) && complaints.length > 0 && (
         <div className="absolute top-4 left-4 z-[1000] space-y-2">
-          <button
-            onClick={toggleHeatMap}
-            className={`px-3 py-2 rounded-lg shadow-lg text-sm font-medium transition-all duration-200 ${
-              showHeatMap 
-                ? 'bg-red-500 text-white hover:bg-red-600' 
-                : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-            }`}
-            title={showHeatMap ? 'Hide Heat Map' : 'Show Heat Map'}
-          >
-            <div className="flex items-center space-x-2">
-              <span className="text-xs">🔥</span>
-              <span>{showHeatMap ? 'Hide' : 'Show'} Heat Map</span>
-            </div>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={toggleHeatMap}
+              className={`px-3 py-2 rounded-lg shadow-lg text-sm font-medium transition-all duration-200 ${
+                showHeatMap 
+                  ? 'bg-red-500 text-white hover:bg-red-600' 
+                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
+              }`}
+              title={showHeatMap ? 'Hide Heat Map' : 'Show Heat Map'}
+            >
+              <div className="flex items-center space-x-2">
+                <span className="text-xs">🔥</span>
+                <span>{showHeatMap ? 'Hide' : 'Show'} Heat Map</span>
+              </div>
+            </button>
+          )}
           
-          {/* Quick Analysis Buttons */}
+          {/* Quick Analysis Buttons: Nearby available to all; Buffer admin-only */}
           {userLocation && (
             <div className="flex flex-col space-y-1">
               <button
@@ -1738,14 +1717,16 @@ const LeafletMapComponent = forwardRef(({
               >
                 📍 Nearby (1km)
               </button>
-              <button
-                onClick={() => enableDrawingMode('buffer')}
-                disabled={isAnalysisInProgress}
-                className="px-3 py-1.5 bg-purple-500 text-white text-xs rounded-md shadow hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Create buffer around your location"
-              >
-                ⭕ Buffer Zone
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => enableDrawingMode('buffer')}
+                  disabled={isAnalysisInProgress}
+                  className="px-3 py-1.5 bg-purple-500 text-white text-xs rounded-md shadow hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Create buffer around your location"
+                >
+                  ⭕ Buffer Zone
+                </button>
+              )}
             </div>
           )}
         </div>

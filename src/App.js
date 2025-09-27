@@ -16,6 +16,7 @@ import ReportComplaint from './pages/ReportComplaint';
 import ComplaintDetail from './pages/ComplaintDetail';
 import MapScreen from './pages/MapScreen';
 import ErrorBoundary from './components/ErrorBoundary';
+import Settings from './pages/Settings';
 
 function App() {
   const [isInitializing, setIsInitializing] = useState(true);
@@ -64,6 +65,19 @@ function App() {
           <Route path="/report-complaint" element={
             <AuthGuard allowedRoles={['Public User', 'Field Agent', 'Department Admin', 'Super Admin']}>
               <ReportComplaint />
+            </AuthGuard>
+          } />
+
+          {/* Settings / Profile routes */}
+          <Route path="/settings" element={
+            <AuthGuard allowedRoles={['Public User', 'Field Agent', 'Department Admin', 'Super Admin']}>
+              <Settings />
+            </AuthGuard>
+          } />
+          {/* Backwards-compat: route "/profile" to Settings */}
+          <Route path="/profile" element={
+            <AuthGuard allowedRoles={['Public User', 'Field Agent', 'Department Admin', 'Super Admin']}>
+              <Settings />
             </AuthGuard>
           } />
 

@@ -118,33 +118,30 @@ const SidebarComponent = ({
 // Fix the handleComplaintClick function
 const handleComplaintClick = (complaint) => {
   if (!complaint) return;
-  
+
   // Validate coordinates before using them
-  const hasValidCoordinates = complaint.coordinates && 
-    Array.isArray(complaint.coordinates) &&
+  const hasValidCoordinates = Array.isArray(complaint.coordinates) &&
     complaint.coordinates.length === 2 &&
     !isNaN(complaint.coordinates[0]) &&
     !isNaN(complaint.coordinates[1]);
-  
+
   // Dispatch event to select complaint for detailed view
-  const selectEvent = new CustomEvent('selectComplaint', {
-    detail: { complaint }
-  });
-  window.dispatchEvent(selectEvent);
-  
-  // Only attempt to fly to the complaint if coordinates are valid
-  if (hasValidCoordinates && mapRef.current && mapRef.current.flyTo) {
-    try {
-      mapRef.current.flyTo({
-        center: complaint.coordinates,
-        zoom: 15,
-        duration: 1000
-      });
-    } catch (error) {
-      console.warn('Unable to fly to complaint location:', error);
+  window.dispatchEvent(new CustomEvent('selectComplaint', { detail: { complaint } }));
+
+  try {
+    if (mapRef?.current?.focusOnComplaint && complaint.id) {
+      // Prefer using the component’s API to focus and open popup
+      mapRef.current.focusOnComplaint(complaint.id);
+      return;
     }
-  } else {
-    console.warn('Cannot fly to complaint location - invalid coordinates or missing map reference');
+    if (hasValidCoordinates && mapRef?.current?.setView) {
+      // Fallback: center on coordinates
+      const [lng, lat] = complaint.coordinates;
+      mapRef.current.setView([lat, lng], 15);
+      return;
+    }
+  } catch (error) {
+    console.warn('Unable to navigate to complaint on map:', error);
   }
 };
 
@@ -407,21 +404,32 @@ const handleComplaintClick = (complaint) => {
               
               <div className="space-y-3 mb-4">
                 <button
-                  onClick={() => runSpatialAnalysis('countPoints')}
+                  onClick={() => {
+                    if (runSpatialAnalysis) return runSpatialAnalysis('count');
+                    if (mapRef?.current?.runSpatialAnalysis) return mapRef.current.runSpatialAnalysis('count');
+                  }}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm"
                 >
                   Count Points in Polygon
                 </button>
                 
                 <button
-                  onClick={() => runSpatialAnalysis('averageDistance')}
+                  onClick={() => {
+                    if (runSpatialAnalysis) return runSpatialAnalysis('hotspot');
+                    if (mapRef?.current?.runHotspotAnalysis) return mapRef.current.runHotspotAnalysis();
+                    if (mapRef?.current?.runSpatialAnalysis) return mapRef.current.runSpatialAnalysis('hotspot');
+                  }}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm"
                 >
-                  Measure Distances
+                  Hotspot Analysis
                 </button>
                 
                 <button
-                  onClick={() => runSpatialAnalysis('density')}
+                  onClick={() => {
+                    if (runSpatialAnalysis) return runSpatialAnalysis('density');
+                    if (mapRef?.current?.runDensityAnalysis) return mapRef.current.runDensityAnalysis();
+                    if (mapRef?.current?.runSpatialAnalysis) return mapRef.current.runSpatialAnalysis('density');
+                  }}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm"
                 >
                   Density Analysis
@@ -455,7 +463,11 @@ const handleComplaintClick = (complaint) => {
               </div>
               
               <button
-                onClick={() => runSpatialAnalysis('clearAnalysis')}
+                onClick={() => {
+                  if (mapRef?.current?.clearAnalysisLayers) return mapRef.current.clearAnalysisLayers();
+                  // Fallback: try known APIs
+                  if (mapRef?.current?.clearAllDrawings) return mapRef.current.clearAllDrawings();
+                }}
                 className="w-full border border-gray-300 hover:bg-gray-100 px-4 py-2 rounded-md text-sm"
               >
                 Clear Analysis

@@ -772,7 +772,7 @@ const ComplaintDetail = () => {
         console.warn('History recording failed (non-critical):', historyError);
       }
       
-      // Update local state
+      // Update local state optimistically
       setComplaint(prev => {
         const currentTime = new Date().toISOString();
         const updated = {
@@ -781,7 +781,6 @@ const ComplaintDetail = () => {
           updated_at: currentTime,
           resolved_at: newStatus === 'resolved' ? currentTime : (newStatus === 'open' ? null : prev.resolved_at)
         };
-        
         if (newStatus === 'resolved' && updated.created_at) {
           updated.resolutionTime = calculateResolutionTime(
             new Date(updated.created_at),
@@ -790,7 +789,6 @@ const ComplaintDetail = () => {
         } else if (newStatus !== 'resolved') {
           updated.resolutionTime = null;
         }
-        
         return updated;
       });
       
@@ -801,14 +799,21 @@ const ComplaintDetail = () => {
         console.warn('Failed to add system comment (non-critical):', commentError);
       }
       
-      // Refresh the complaint data from the database to ensure consistency
+      // Refresh from DB and ensure state matches persisted value
       try {
         await fetchComplaintDetails(complaint.id);
-        await fetchComments(); // Refresh comments to show new system comment
+        await fetchComments();
       } catch (refreshError) {
         console.warn('Failed to refresh complaint data (non-critical):', refreshError);
       }
-      
+      // Final assert: if DB returned stale status, set explicitly to requested
+      setComplaint(prev => {
+        if (!prev) return prev;
+        if (prev.status !== newStatus) {
+          return { ...prev, status: newStatus };
+        }
+        return prev;
+      });
       alert(`Status successfully updated to ${getStatusText(newStatus)}`);
       
     } catch (error) {

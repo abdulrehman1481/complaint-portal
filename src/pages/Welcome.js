@@ -1,8 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Menu, Map, AlertTriangle, User, Mail, Lock, Eye, EyeOff, ChevronRight, MapPin, BarChart2, Filter, Calendar, Clock, Image, Route, Facebook, Twitter, Instagram, Github, Linkedin } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { redirectToDashboard } from '../utils/roleBasedRouting';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+// Fix for default markers in Leaflet in bundlers
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: require('leaflet/dist/images/marker-icon-2x.png'),
+  iconUrl: require('leaflet/dist/images/marker-icon.png'),
+  shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
+});
 
 // Main App Component
 export default function LandingPage() {
@@ -12,6 +21,8 @@ export default function LandingPage() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [authError, setAuthError] = useState(null);
   const navigate = useNavigate();
+  const heroMapRef = useRef(null);
+  const heroMapInstance = useRef(null);
 
   // Form state for login
   const [loginForm, setLoginForm] = useState({
@@ -40,6 +51,34 @@ export default function LandingPage() {
     };
     checkUser();
   }, [navigate]);
+
+  // Initialize simple Leaflet map on hero
+  useEffect(() => {
+    if (!heroMapRef.current) return;
+    if (heroMapInstance.current) return;
+    try {
+      const map = L.map(heroMapRef.current, { zoomControl: false }).setView([33.6844, 73.0479], 11); // Islamabad
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+      // Add a couple of example markers for Pakistani cities
+      const cities = [
+        { name: 'Islamabad', lat: 33.6844, lng: 73.0479 },
+        { name: 'Rawalpindi', lat: 33.5651, lng: 73.0169 },
+        { name: 'Lahore', lat: 31.5204, lng: 74.3587 },
+      ];
+      cities.forEach(c => L.marker([c.lat, c.lng]).addTo(map).bindPopup(`<strong>${c.name}</strong>`));
+      heroMapInstance.current = map;
+    } catch (e) {
+      console.warn('Map init failed:', e);
+    }
+    return () => {
+      if (heroMapInstance.current) {
+        heroMapInstance.current.remove();
+        heroMapInstance.current = null;
+      }
+    };
+  }, []);
 
   const toggleMenu = () => {
     setIsMenuOpen(!isMenuOpen);
@@ -162,7 +201,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
       {/* Navigation Bar */}
-      <nav className="bg-blue-700 text-white shadow-md">
+  <nav className="bg-green-700 text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
@@ -172,18 +211,18 @@ export default function LandingPage() {
             
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center space-x-4">
-              <a href="#features" className="px-3 py-2 rounded-md hover:bg-blue-600 transition-colors">Features</a>
-              <a href="#how-it-works" className="px-3 py-2 rounded-md hover:bg-blue-600 transition-colors">How It Works</a>
-              <a href="#about" className="px-3 py-2 rounded-md hover:bg-blue-600 transition-colors">About</a>
+              <a href="#features" className="px-3 py-2 rounded-md hover:bg-green-600 transition-colors">Features</a>
+              <a href="#how-it-works" className="px-3 py-2 rounded-md hover:bg-green-600 transition-colors">How It Works</a>
+              <a href="#about" className="px-3 py-2 rounded-md hover:bg-green-600 transition-colors">About</a>
               <button 
                 onClick={toggleLogin}
-                className="px-4 py-2 rounded-md bg-white text-blue-700 font-medium hover:bg-gray-100 transition-colors"
+                className="px-4 py-2 rounded-md bg-white text-green-700 font-medium hover:bg-gray-100 transition-colors"
               >
                 Login
               </button>
               <button 
                 onClick={toggleSignup}
-                className="px-4 py-2 rounded-md bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors"
+                className="px-4 py-2 rounded-md bg-green-500 text-white font-medium hover:bg-green-600 transition-colors"
               >
                 Sign Up
               </button>
@@ -193,7 +232,7 @@ export default function LandingPage() {
             <div className="md:hidden flex items-center">
               <button 
                 onClick={toggleMenu}
-                className="inline-flex items-center justify-center p-2 rounded-md hover:bg-blue-600 focus:outline-none"
+                className="inline-flex items-center justify-center p-2 rounded-md hover:bg-green-600 focus:outline-none"
               >
                 {isMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
               </button>
@@ -205,18 +244,18 @@ export default function LandingPage() {
         {isMenuOpen && (
           <div className="md:hidden">
             <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
-              <a href="#features" className="block px-3 py-2 rounded-md hover:bg-blue-600 transition-colors">Features</a>
-              <a href="#how-it-works" className="block px-3 py-2 rounded-md hover:bg-blue-600 transition-colors">How It Works</a>
-              <a href="#about" className="block px-3 py-2 rounded-md hover:bg-blue-600 transition-colors">About</a>
+              <a href="#features" className="block px-3 py-2 rounded-md hover:bg-green-600 transition-colors">Features</a>
+              <a href="#how-it-works" className="block px-3 py-2 rounded-md hover:bg-green-600 transition-colors">How It Works</a>
+              <a href="#about" className="block px-3 py-2 rounded-md hover:bg-green-600 transition-colors">About</a>
               <button 
                 onClick={toggleLogin}
-                className="w-full text-left px-3 py-2 rounded-md bg-white text-blue-700 font-medium hover:bg-gray-100 transition-colors mt-2"
+                className="w-full text-left px-3 py-2 rounded-md bg-white text-green-700 font-medium hover:bg-gray-100 transition-colors mt-2"
               >
                 Login
               </button>
               <button 
                 onClick={toggleSignup}
-                className="w-full text-left px-3 py-2 rounded-md bg-blue-500 text-white font-medium hover:bg-blue-600 transition-colors mt-2"
+                className="w-full text-left px-3 py-2 rounded-md bg-green-500 text-white font-medium hover:bg-green-600 transition-colors mt-2"
               >
                 Sign Up
               </button>
@@ -314,7 +353,7 @@ export default function LandingPage() {
               
               <button
                 type="submit"
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
               >
                 Sign in
               </button>
@@ -487,7 +526,7 @@ export default function LandingPage() {
               
               <button
                 type="submit"
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
               >
                 Create Account
               </button>
@@ -512,26 +551,27 @@ export default function LandingPage() {
       )}
 
       {/* Hero Section */}
-      <div className="bg-blue-700 text-white pt-16 pb-24 md:py-20">
+      <div className="bg-green-700 text-white pt-16 pb-24 md:py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row items-center">
             <div className="md:w-1/2 mb-10 md:mb-0">
-              <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-4">
-                Mapping Community Issues for Faster Resolution
+              <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-2">
+                Pakistan CivicMapTrack
               </h1>
-              <p className="text-lg md:text-xl mb-8 text-blue-100 max-w-lg">
-                Report, track, and resolve local issues with our GIS-powered complaint management system. Make your voice heard and community better.
+              <p className="text-sm uppercase tracking-wide text-green-100 mb-3">By Abdul Rehman</p>
+              <p className="text-lg md:text-xl mb-8 text-green-100 max-w-lg">
+                Report, track, and resolve local issues across Pakistan with our GIS-powered platform. Awaz aap ki, behtari sab ki.
               </p>
               <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
                 <button
                   onClick={toggleSignup}
-                  className="px-6 py-3 bg-white text-blue-700 font-medium rounded-md shadow-lg hover:bg-gray-100 transition-colors"
+                  className="px-6 py-3 bg-white text-green-700 font-medium rounded-md shadow-lg hover:bg-gray-100 transition-colors"
                 >
                   Get Started
                 </button>
                 <a 
                   href="#how-it-works"
-                  className="px-6 py-3 border border-white text-white font-medium rounded-md hover:bg-blue-600 transition-colors text-center"
+                  className="px-6 py-3 border border-white text-white font-medium rounded-md hover:bg-green-600 transition-colors text-center"
                 >
                   Learn More
                 </a>
@@ -540,16 +580,16 @@ export default function LandingPage() {
             <div className="md:w-1/2">
               <div className="relative">
                 <div className="bg-white rounded-lg shadow-xl overflow-hidden">
-                  <div className="h-64 bg-gray-300">
-                    <img src="/api/placeholder/600/300" alt="Interactive map interface showing complaints" className="w-full h-full object-cover" />
+                  <div className="h-64">
+                    <div ref={heroMapRef} className="w-full h-full" />
                   </div>
                 </div>
-                <div className="absolute -bottom-6 -right-6 bg-blue-500 rounded-lg shadow-lg p-4 max-w-xs">
+                <div className="absolute -bottom-6 -right-6 bg-green-600 rounded-lg shadow-lg p-4 max-w-xs">
                   <div className="flex items-start space-x-3">
                     <AlertTriangle className="h-5 w-5 text-white mt-1 flex-shrink-0" />
                     <div>
                       <h3 className="font-medium text-white">Report Issues Easily</h3>
-                      <p className="text-sm text-blue-100">Just click on the map, fill a simple form, and your complaint is submitted.</p>
+                      <p className="text-sm text-green-100">Click on the map, fill a simple form, and your complaint is submitted.</p>
                     </div>
                   </div>
                 </div>
@@ -705,20 +745,20 @@ export default function LandingPage() {
       </div>
 
       {/* CTA Section */}
-      <div className="bg-blue-700 py-16">
+  <div className="bg-green-700 py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-blue-800 rounded-lg shadow-xl overflow-hidden">
+      <div className="bg-green-800 rounded-lg shadow-xl overflow-hidden">
             <div className="px-6 py-12 md:p-12 text-center md:text-left md:flex items-center">
               <div className="md:w-2/3 mb-8 md:mb-0">
                 <h2 className="text-3xl font-bold text-white mb-4">Ready to improve your community?</h2>
-                <p className="text-xl text-blue-100">
+        <p className="text-xl text-green-100">
                   Join thousands of citizens who are making a difference every day.
                 </p>
               </div>
               <div className="md:w-1/3 md:text-right">
                 <button
                   onClick={toggleSignup}
-                  className="px-8 py-4 bg-white text-blue-700 font-medium rounded-md shadow-lg hover:bg-gray-100 transition-colors text-lg"
+                  className="px-8 py-4 bg-white text-green-700 font-medium rounded-md shadow-lg hover:bg-gray-100 transition-colors text-lg"
                 >
                   Sign Up Now
                 </button>
@@ -759,16 +799,16 @@ export default function LandingPage() {
       </div>
 
       {/* Footer */}
-      <footer className="bg-gray-800 text-white py-12">
+  <footer className="bg-gray-900 text-white py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
             <div>
               <div className="flex items-center mb-4">
                 <Map className="h-6 w-6 mr-2" />
-                <span className="font-bold text-lg">CivicMapTrack</span>
+        <span className="font-bold text-lg">CivicMapTrack Pakistan</span>
               </div>
               <p className="text-gray-400 text-sm mb-4">
-                Making communities better through geospatial complaint tracking and transparent issue resolution.
+        Behtari ke liye aap ki awaz — geospatial complaint tracking aur transparent issue resolution ke sath.
               </p>
               <div className="flex space-x-4">
                 <a href="#" className="text-gray-400 hover:text-white transition-colors">
@@ -811,21 +851,20 @@ export default function LandingPage() {
               </ul>
             </div>
             
-            <div>
+      <div>
               <h3 className="font-semibold text-lg mb-4">Contact Us</h3>
               <address className="not-italic text-gray-400">
-                <p className="mb-2">123 Main Street</p>
-                <p className="mb-2">Cityville, State 12345</p>
-                <p className="mb-2">United States</p>
-                <p className="mb-2">Email: info@civicmaptrack.com</p>
-                <p>Phone: (123) 456-7890</p>
+        <p className="mb-2">Street 4, G-10/2</p>
+        <p className="mb-2">Islamabad, Pakistan</p>
+        <p className="mb-2">Email: contact@civicmaptrack.pk</p>
+        <p>Phone: +92 300 1234567</p>
               </address>
             </div>
           </div>
           
           <div className="border-t border-gray-700 mt-8 pt-8 text-center text-gray-400 text-sm">
-            <p>&copy; {new Date().getFullYear()} CivicMapTrack. All rights reserved.</p>
-            <p className="mt-2">A University WebGIS Project</p>
+      <p>&copy; {new Date().getFullYear()} CivicMapTrack Pakistan. All rights reserved.</p>
+      <p className="mt-2">Developed by Abdul Rehman</p>
           </div>
         </div>
       </footer>

@@ -233,7 +233,12 @@ const UserDashboard = () => {
           .rpc('get_complaints_by_category', { limit_count: 5 });
         
         if (categoryError) throw categoryError;
-        categories = categoryData || [];
+        // Normalize RPC output to { name, count }
+        categories = (categoryData || []).map(row => ({
+          name: row.category_name || row.name,
+          count: row.complaint_count || row.count || 0,
+          icon: row.category_icon || row.icon || null
+        })).filter(c => c.count > 0);
       } catch (rpcError) {
         console.warn('RPC function not available, falling back to basic query:', rpcError);
         
@@ -252,11 +257,10 @@ const UserDashboard = () => {
         if (categoryError) throw categoryError;
         
         categories = (categoryData || []).map(cat => ({
-          category_id: cat.id,
-          category_name: cat.name,
-          category_icon: cat.icon,
-          complaint_count: cat.complaints?.length || 0
-        })).filter(cat => cat.complaint_count > 0);
+          name: cat.name,
+          count: cat.complaints?.length || 0,
+          icon: cat.icon
+        })).filter(cat => cat.count > 0);
       }
       
       const statusData = [
@@ -285,8 +289,10 @@ const UserDashboard = () => {
       statusData[1].value = inProgressCount || 0;
       statusData[2].value = resolvedCount || 0;
       
+      // Sort categories by count desc and cap at 5
+      const topCategories = (categories || []).sort((a,b) => (b.count||0)-(a.count||0)).slice(0,5);
       setCommunityStats({
-        categories: categories || [],
+        categories: topCategories,
         statusDistribution: statusData
       });
       
@@ -327,8 +333,8 @@ const UserDashboard = () => {
         mapInstanceRef.current.remove();
       }
 
-      // Create Leaflet map
-      const map = L.map(mapContainerRef.current).setView([40, -74.5], 9);
+  // Create Leaflet map with Pakistan default center (Islamabad)
+  const map = L.map(mapContainerRef.current).setView([33.6844, 73.0479], 10);
       
       // Add tile layer
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -338,24 +344,34 @@ const UserDashboard = () => {
       mapInstanceRef.current = map;
       
       // Process complaints and add markers
-      let centerPoint = null;
-      let validComplaints = complaints.filter(complaint => 
-        complaint.location && typeof complaint.location === 'object'
-      );
+  let centerPoint = null;
+  // Parse as many coordinate shapes as possible: GeoJSON, {lat,lng}, {latitude,longitude}, WKT string, fallback coordinates array
+  const validComplaints = complaints.filter(Boolean);
       
       if (validComplaints.length > 0) {
-        const points = validComplaints
-          .map(complaint => {
-            if (complaint.location.latitude && complaint.location.longitude) {
-              return [complaint.location.longitude, complaint.location.latitude];
-            } else if (complaint.location.lng && complaint.location.lat) {
-              return [complaint.location.lng, complaint.location.lat];
-            } else if (complaint.coordinates && complaint.coordinates.length === 2) {
-              return complaint.coordinates;
+        const points = validComplaints.map(c => {
+          let lng = null, lat = null;
+          const loc = c.location;
+          if (loc) {
+            if (typeof loc === 'string') {
+              const m = loc.match(/POINT\s*\(\s*([-+]?\d+\.?\d*)\s+([-+]?\d+\.?\d*)\s*\)/i);
+              if (m) { lng = parseFloat(m[1]); lat = parseFloat(m[2]); }
+            } else if (typeof loc === 'object') {
+              if (Array.isArray(loc.coordinates) && loc.coordinates.length === 2) {
+                [lng, lat] = loc.coordinates;
+              } else if (loc.lng != null && loc.lat != null) {
+                lng = loc.lng; lat = loc.lat;
+              } else if (loc.longitude != null && loc.latitude != null) {
+                lng = loc.longitude; lat = loc.latitude;
+              }
             }
-            return null;
-          })
-          .filter(point => point !== null);
+          }
+          if ((lng == null || lat == null) && Array.isArray(c.coordinates) && c.coordinates.length === 2) {
+            [lng, lat] = c.coordinates;
+          }
+          if (lng != null && lat != null && !isNaN(lng) && !isNaN(lat)) return [lng, lat];
+          return null;
+        }).filter(Boolean);
         
         if (points.length > 0) {
           const center = points.reduce(
@@ -378,7 +394,7 @@ const UserDashboard = () => {
         }
       }
       
-      // Get user location if no complaints
+  // Get user location if no complaints
       if (!centerPoint) {
         try {
           const position = await new Promise((resolve, reject) => {
@@ -403,7 +419,8 @@ const UserDashboard = () => {
           
         } catch (error) {
           console.warn('Could not get user location:', error);
-          centerPoint = [-74.5, 40];
+          // Default to Islamabad if location not available
+          centerPoint = [73.0479, 33.6844];
         }
       }
       
