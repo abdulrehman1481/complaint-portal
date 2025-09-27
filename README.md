@@ -1,70 +1,249 @@
-# Getting Started with Create React App
+# Community Complaint Management System
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A comprehensive web application for managing and tracking community complaints with geospatial analysis, role-based access control, and real-time monitoring capabilities.
 
-## Available Scripts
+## 🌟 Features
 
-In the project directory, you can run:
+### 📍 Interactive Map Integration
+- **Real-time Complaint Mapping**: Visualize complaints geographically using Leaflet.js
+- **Geospatial Analysis**: Advanced spatial querying and clustering analysis
+- **Heatmap Visualization**: Identify complaint hotspots and density patterns
+- **Drawing Tools**: Create custom polygons and areas for analysis
+- **Location Tracking**: GPS-based complaint reporting with precise coordinates
 
-### `npm start`
+### 👥 Role-Based Access Control
+- **Public Users**: Report complaints, view status, track submissions
+- **Field Agents**: Manage assigned complaints, update status, navigate to locations
+- **Department Admins**: Oversee department-specific complaints and resources
+- **System Admins**: Full system access, user management, analytics dashboard
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### 📊 Analytics & Reporting
+- **Real-time Dashboard**: Comprehensive statistics and performance metrics
+- **Complaint Trends**: Historical analysis with charts and graphs
+- **Performance Tracking**: Resolution times, response rates, satisfaction metrics
+- **Data Export**: CSV/Excel export functionality for reports
+- **Predictive Analytics**: Complaint pattern recognition and forecasting
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### 🔧 Advanced Management Tools
+- **Complaint Assignment**: Automatic and manual assignment to field agents
+- **Status Tracking**: Multi-stage workflow (Open → In Progress → Resolved)
+- **Comment System**: Internal communication and updates
+- **Category Management**: Customizable complaint categories with icons
+- **Department Integration**: Multi-department workflow support
 
-### `npm test`
+## 🛠️ Tech Stack
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+### Frontend
+- **React 18.2.0** - Modern UI framework
+- **React Router Dom** - Client-side routing
+- **Tailwind CSS** - Utility-first CSS framework
+- **Lucide React** - Beautiful icon library
 
-### `npm run build`
+### Mapping & Visualization
+- **Leaflet.js** - Interactive mapping library
+- **React Leaflet** - React components for Leaflet
+- **Leaflet Draw** - Drawing tools for map annotations
+- **Leaflet MarkerCluster** - Marker clustering for performance
+- **Leaflet Heat** - Heatmap visualization
+- **Turf.js** - Advanced geospatial analysis
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+### Charts & Analytics
+- **Chart.js** - Data visualization library
+- **Recharts** - React charting library
+- **Date-fns** - Date manipulation utilities
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Backend & Database
+- **Supabase** - Backend-as-a-Service platform
+- **PostgreSQL** - Robust relational database with PostGIS
+- **Row Level Security** - Fine-grained access control
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### Additional Libraries
+- **Axios** - HTTP client for API requests
+- **jQuery** - DOM manipulation and utilities
+- **FontAwesome** - Additional icon set
+- **XLSX** - Excel file generation and export
 
-### `npm run eject`
+## 📦 Installation
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### Prerequisites
+- Node.js (v16.0.0 or higher)
+- npm or yarn package manager
+- Supabase account and project
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### Setup Instructions
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/abdulrehman1481/frontend-web.git
+   cd frontend-web
+   ```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-## Learn More
+3. **Environment Configuration**
+   
+   Create a `.env` file in the root directory:
+   ```env
+   # Supabase Configuration
+   REACT_APP_SUPABASE_URL=your_supabase_project_url
+   REACT_APP_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+4. **Database Setup**
+   
+   Execute the SQL files in the following order:
+   ```bash
+   # Navigate to database schema directory
+   cd src/databaseschema/
+   
+   # Execute schema files in your Supabase SQL editor:
+   # 1. db.sql (main schema)
+   # 2. add_complaint_comment.sql
+   # 3. add_department_to_complaints.sql
+   # 4. community_stats_functions.sql
+   # 5. department_functions.sql
+   # 6. field_agent_functions.sql
+   # 7. user_preferences.sql
+   ```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+5. **Insert Initial Data**
+   ```bash
+   # Execute the categories insert script
+   cd src/databasequeries/
+   # Run insert_categories.sql in Supabase SQL editor
+   ```
 
-### Code Splitting
+6. **Start Development Server**
+   ```bash
+   npm start
+   ```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+   The application will open at `http://localhost:3000`
 
-### Analyzing the Bundle Size
+## 🚀 Usage
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+### For Public Users
+1. **Register/Login**: Create account or sign in
+2. **Report Complaint**: Click on map location or use current GPS
+3. **Add Details**: Select category, add description, upload photos
+4. **Track Status**: Monitor complaint progress in dashboard
 
-### Making a Progressive Web App
+### For Administrators
+1. **Access Admin Panel**: Login with admin credentials
+2. **Manage Complaints**: View, assign, and update complaint status
+3. **User Management**: Create/edit users and assign roles
+4. **Analytics**: Review performance metrics and generate reports
+5. **Map Analysis**: Use drawing tools for spatial analysis
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+### For Field Agents
+1. **View Assignments**: Check assigned complaints in dashboard
+2. **Navigate to Location**: Use integrated GPS navigation
+3. **Update Status**: Change complaint status and add comments
+4. **Upload Evidence**: Attach photos and completion reports
 
-### Advanced Configuration
+## 📁 Project Structure
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+```
+frontend-web/
+├── public/                 # Static assets
+├── src/
+│   ├── components/        # Reusable React components
+│   │   ├── admin/         # Admin-specific components
+│   │   ├── map/           # Map-related components
+│   │   └── sidebar/       # Navigation components
+│   ├── pages/             # Main application pages
+│   ├── utils/             # Utility functions and helpers
+│   ├── styles/            # CSS stylesheets
+│   ├── databaseschema/    # SQL schema files
+│   └── databasequeries/   # SQL query files
+├── build/                 # Production build files
+└── docs/                 # Documentation files
+```
 
-### Deployment
+## 🔧 Configuration
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+### Environment Variables
+- `REACT_APP_SUPABASE_URL`: Your Supabase project URL
+- `REACT_APP_SUPABASE_ANON_KEY`: Supabase anonymous key
 
-### `npm run build` fails to minify
+### Build Configuration
+- **Development**: `npm start`
+- **Production**: `npm run build`
+- **Testing**: `npm test`
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## 🌍 Deployment
+
+### Netlify (Recommended)
+1. Build the project: `npm run build`
+2. Deploy the `build` folder to Netlify
+3. Configure environment variables in Netlify dashboard
+
+### Manual Deployment
+1. Run `npm run build`
+2. Upload `build` folder contents to your web server
+3. Configure environment variables on your hosting platform
+
+## 🔐 Security Features
+
+- **Row Level Security (RLS)**: Database-level access control
+- **Role-based permissions**: Granular access control
+- **Environment variables**: Secure API key management
+- **Input validation**: Frontend and backend data validation
+- **HTTPS enforcement**: Secure data transmission
+
+## 📈 Performance Optimizations
+
+- **Marker clustering**: Efficient large dataset rendering
+- **Lazy loading**: Components loaded on demand
+- **Image optimization**: Compressed images and assets
+- **Caching strategies**: Optimized API response caching
+- **Bundle splitting**: Reduced initial load times
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/new-feature`
+3. Commit changes: `git commit -am 'Add new feature'`
+4. Push to branch: `git push origin feature/new-feature`
+5. Submit pull request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🐛 Known Issues
+
+- Map rendering performance on mobile devices
+- Large dataset handling optimization needed
+- IE11 compatibility issues
+
+## 🔮 Future Enhancements
+
+- [ ] Mobile application development
+- [ ] Push notifications for status updates
+- [ ] AI-powered complaint categorization
+- [ ] Advanced predictive analytics
+- [ ] Multi-language support
+- [ ] Offline functionality
+- [ ] Integration with external GIS systems
+
+## 📞 Support
+
+For support and questions:
+- Create an issue on GitHub
+- Contact the development team
+- Check the documentation wiki
+
+## 🏆 Acknowledgments
+
+- OpenStreetMap contributors for map data
+- Supabase team for backend infrastructure
+- React and Leaflet.js communities
+- All contributors and testers
+
+---
+
+**Built with ❤️ for better community management**
