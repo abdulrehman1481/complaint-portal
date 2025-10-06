@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import '../styles/complaint-detail-map.css';
+import '../styles/map-fixes.css';
 import { supabase } from '../supabaseClient';
 import { 
   AlertTriangle, 
@@ -193,6 +194,76 @@ const ComplaintDetail = () => {
     };
     
     fetchComplaintAndUser();
+
+    // Set up real-time subscription for complaint updates
+    const complaintSubscription = supabase
+      .channel(`complaint_${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'complaints',
+          filter: `id=eq.${id}`
+        },
+        (payload) => {
+          console.log('Real-time complaint update:', payload);
+          
+          if (payload.eventType === 'UPDATE') {
+            setComplaint(prev => {
+              if (!prev) return prev;
+              const updated = { ...prev, ...payload.new };
+              
+              // Update resolution time if status changed to resolved
+              if (updated.status === 'resolved' && updated.created_at) {
+                try {
+                  updated.resolutionTime = calculateResolutionTime(
+                    new Date(updated.created_at),
+                    new Date(updated.resolved_at || new Date())
+                  );
+                } catch (e) {
+                  console.warn('Error calculating resolution time:', e);
+                }
+              } else if (updated.status !== 'resolved') {
+                updated.resolutionTime = null;
+              }
+              
+              return updated;
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    // Set up real-time subscription for comments
+    const commentsSubscription = supabase
+      .channel(`complaint_comments_${id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'complaint_comments',
+          filter: `complaint_id=eq.${id}`
+        },
+        (payload) => {
+          console.log('Real-time comment update:', payload);
+          
+          if (payload.eventType === 'INSERT') {
+            // Refresh comments to get full data with user info
+            fetchComments();
+          } else if (payload.eventType === 'UPDATE' || payload.eventType === 'DELETE') {
+            fetchComments();
+          }
+        }
+      )
+      .subscribe();
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      complaintSubscription.unsubscribe();
+      commentsSubscription.unsubscribe();
+    };
   }, [id, navigate]);
 
   // Fetch field agents when complaint is loaded (to filter by department)
@@ -204,12 +275,23 @@ const ComplaintDetail = () => {
 
   useEffect(() => {
     if (complaint && mapContainer.current && !map.current) {
-      initializeMap();
+      // Add delay for proper DOM initialization
+      const timer = setTimeout(() => {
+        if (mapContainer.current && !map.current && complaint) {
+          initializeMap();
+        }
+      }, 300);
+      
+      return () => clearTimeout(timer);
     }
     // Re-initialize map if complaint or container changes
     return () => {
       if (map.current) {
-        map.current.remove();
+        try {
+          map.current.remove();
+        } catch (e) {
+          console.warn('Error removing map:', e);
+        }
         map.current = null;
       }
     };
@@ -275,8 +357,20 @@ const ComplaintDetail = () => {
     
     // Clean up existing map
     if (map.current) {
-      map.current.remove();
+      try {
+        map.current.remove();
+      } catch (e) {
+        console.warn('Error removing existing map:', e);
+      }
       map.current = null;
+    }
+    
+    // Ensure container has proper dimensions
+    const container = mapContainer.current;
+    if (container.clientWidth === 0 || container.clientHeight === 0) {
+      container.style.width = '100%';
+      container.style.height = '400px';
+      container.style.minHeight = '400px';
     }
     
     let lat = null, lng = null;
@@ -695,6 +789,12 @@ const ComplaintDetail = () => {
       
       console.log('Attempting to update status to:', newStatus, 'for complaint ID:', complaint.id);
       
+      // Prevent duplicate status updates
+      if (complaint.status === newStatus) {
+        console.log('Status is already', newStatus, '- skipping update');
+        return;
+      }
+      
       // Try using RPC function first (most reliable)
       try {
         console.log('Attempting RPC function update...');
@@ -713,7 +813,7 @@ const ComplaintDetail = () => {
       } catch (rpcError) {
         console.warn('RPC failed, trying direct update:', rpcError);
         
-        // Fallback to direct update with minimal fields
+        // Fallback to direct update with minimal fields only
         const updates = { 
           status: newStatus,
           updated_at: new Date().toISOString()
@@ -726,6 +826,7 @@ const ComplaintDetail = () => {
         }
         
         console.log('Direct update payload:', updates);
+        console.log('Complaint ID:', parseInt(complaint.id));
         
         // Use simple update without select to avoid column issues
         const { error: directError } = await supabase
@@ -741,10 +842,28 @@ const ComplaintDetail = () => {
             details: directError.details,
             hint: directError.hint
           });
-          throw directError;
+          
+          // If it's a column error, try with even more minimal update
+          if (directError.code === '42703') {
+            console.log('Trying minimal update due to column error...');
+            const minimalUpdate = { status: newStatus };
+            
+            const { error: minimalError } = await supabase
+              .from('complaints')
+              .update(minimalUpdate)
+              .eq('id', parseInt(complaint.id));
+              
+            if (minimalError) {
+              throw minimalError;
+            }
+            
+            console.log('Minimal update successful');
+          } else {
+            throw directError;
+          }
+        } else {
+          console.log('Direct update successful');
         }
-        
-        console.log('Direct update successful');
       }
       
       // Try to record status change in complaint_history table (optional)
@@ -792,9 +911,18 @@ const ComplaintDetail = () => {
         return updated;
       });
       
-      // Try to add system comment (optional)
+      // Try to add system comment (optional) - but prevent duplicates
       try {
-        await addSystemComment(`Status changed to ${getStatusText(newStatus)}`);
+        const recentComments = comments.slice(-3); // Check last 3 comments
+        const statusChangeMessage = `Status changed to ${getStatusText(newStatus)}`;
+        const isDuplicate = recentComments.some(c => 
+          c.comment?.includes(statusChangeMessage) && 
+          new Date(c.created_at).getTime() > Date.now() - 60000 // Within last minute
+        );
+        
+        if (!isDuplicate) {
+          await addSystemComment(statusChangeMessage);
+        }
       } catch (commentError) {
         console.warn('Failed to add system comment (non-critical):', commentError);
       }
@@ -806,6 +934,7 @@ const ComplaintDetail = () => {
       } catch (refreshError) {
         console.warn('Failed to refresh complaint data (non-critical):', refreshError);
       }
+      
       // Final assert: if DB returned stale status, set explicitly to requested
       setComplaint(prev => {
         if (!prev) return prev;
@@ -814,7 +943,25 @@ const ComplaintDetail = () => {
         }
         return prev;
       });
-      alert(`Status successfully updated to ${getStatusText(newStatus)}`);
+      
+      // Show success notification
+      const statusText = getStatusText(newStatus);
+      const successMessage = `Status successfully updated to ${statusText}`;
+      
+      // Create a temporary success notification
+      const notification = document.createElement('div');
+      notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300';
+      notification.textContent = successMessage;
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 300);
+      }, 3000);
       
     } catch (error) {
       console.error('Error updating status:', error);
@@ -840,14 +987,37 @@ const ComplaintDetail = () => {
       }
       
       alert(`Failed to update status: ${errorMessage}`);
+      
+      // Also show error notification
+      const errorNotification = document.createElement('div');
+      errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300';
+      errorNotification.textContent = `Failed to update status: ${errorMessage}`;
+      document.body.appendChild(errorNotification);
+      
+      setTimeout(() => {
+        errorNotification.style.opacity = '0';
+        setTimeout(() => {
+          if (errorNotification.parentNode) {
+            errorNotification.parentNode.removeChild(errorNotification);
+          }
+        }, 300);
+      }, 5000);
     } finally {
       setStatusUpdating(false);
     }
   };
 
   const handleAssignToMe = async () => {
+    if (statusUpdating) return;
+    
     try {
       setStatusUpdating(true);
+      
+      // Check if already assigned to current user
+      if (complaint.assigned_to === user.id) {
+        console.log('Complaint already assigned to current user - skipping');
+        return;
+      }
       
       // Update original status if needed
       const previousStatus = complaint.status;
@@ -901,7 +1071,17 @@ const ComplaintDetail = () => {
         }
       }
       
-      await addSystemComment(`Complaint assigned to ${user.first_name} ${user.last_name}`);
+      // Add system comment only if not already assigned to this user
+      const recentComments = comments.slice(-3);
+      const assignmentMessage = `Complaint assigned to ${user.first_name} ${user.last_name}`;
+      const isDuplicateAssignment = recentComments.some(c => 
+        c.comment?.includes(assignmentMessage) && 
+        new Date(c.created_at).getTime() > Date.now() - 60000 // Within last minute
+      );
+      
+      if (!isDuplicateAssignment) {
+        await addSystemComment(assignmentMessage);
+      }
       
       // Update local state
       setComplaint(prev => ({
@@ -938,10 +1118,18 @@ const ComplaintDetail = () => {
   };
 
   const handleAssignToFieldAgent = async (agentId) => {
+    if (statusUpdating) return;
+    
     try {
       if (!agentId) return;
       
       setStatusUpdating(true);
+      
+      // Check if already assigned to this agent
+      if (complaint.assigned_to === agentId) {
+        console.log('Complaint already assigned to this agent - skipping');
+        return;
+      }
       
       const selectedAgent = fieldAgents.find(agent => agent.id === agentId);
       if (!selectedAgent) {
@@ -1026,9 +1214,18 @@ const ComplaintDetail = () => {
         console.warn('Assignment history recording failed (non-critical):', historyError);
       }
       
-      // Try to add system comment (optional)
+      // Try to add system comment (optional) - but prevent duplicates
       try {
-        await addSystemComment(`Complaint assigned to field agent ${selectedAgent.first_name} ${selectedAgent.last_name}`);
+        const recentComments = comments.slice(-3);
+        const assignmentMessage = `Complaint assigned to field agent ${selectedAgent.first_name} ${selectedAgent.last_name}`;
+        const isDuplicateAssignment = recentComments.some(c => 
+          c.comment?.includes(assignmentMessage) && 
+          new Date(c.created_at).getTime() > Date.now() - 60000 // Within last minute
+        );
+        
+        if (!isDuplicateAssignment) {
+          await addSystemComment(assignmentMessage);
+        }
       } catch (commentError) {
         console.warn('Failed to add assignment comment (non-critical):', commentError);
       }

@@ -24,7 +24,7 @@ import {
   Users, AlertTriangle, CheckCircle, Clock, LogOut, 
   Settings, Home, Map as MapIcon, BarChart2, Bell, ArrowLeft,
   Building, RefreshCw, X, Layers, Edit3, Circle, Square, 
-  Triangle, Hexagon, MapPin
+  Triangle, Hexagon, MapPin, Target, Download, Activity
 } from 'lucide-react';
 import DashboardStats from '../components/admin/DashboardStats';
 import ComplaintsTable from '../components/admin/ComplaintsTable';
@@ -68,7 +68,7 @@ const AdminDashboard = () => {
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [drawingTool, setDrawingTool] = useState(null);
   const [drawnFeatures, setDrawnFeatures] = useState([]);
-  const [spatialAnalysisResults, setSpatialAnalysisResults] = useState(null);
+  const [spatialAnalysisResults, setSpatialAnalysisResults] = useState({});
   const [heatmapVisible, setHeatmapVisible] = useState(false);
   const [clusteringEnabled, setClusteringEnabled] = useState(true);
   
@@ -78,6 +78,7 @@ const AdminDashboard = () => {
   const trendChartRef = useRef(null);
   const performanceChartRef = useRef(null);
   const geoChartRef = useRef(null);
+  const mapContainerRef = useRef(null);
 
   const [complaintFilters, setComplaintFilters] = useState({
     status: '',
@@ -134,6 +135,29 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     fetchAdminData();
+    
+    // Cleanup function for component unmount
+    return () => {
+      try {
+        if (window.adminMapCleanup) {
+          window.adminMapCleanup();
+          window.adminMapCleanup = null;
+        }
+        
+        // Additional safety cleanup
+        if (window.adminMapInstance) {
+          window.adminMapInstance = null;
+        }
+        
+        // Clear any remaining map containers
+        const container = document.getElementById('admin-map-container');
+        if (container && container.parentNode) {
+          container.innerHTML = '';
+        }
+      } catch (error) {
+        console.warn('Error during component cleanup:', error);
+      }
+    };
   }, []);
 
   const fetchAdminData = async () => {
@@ -391,7 +415,8 @@ const AdminDashboard = () => {
           *,
           categories (id, name, icon),
           users:reported_by (first_name, last_name),
-          assigned_to_user:assigned_to (first_name, last_name)
+          assigned_to_user:assigned_to (first_name, last_name, email, official_position),
+          departments (id, name)
         `, { count: 'exact' });
       
       // Filter by department if user is Department Admin
@@ -740,27 +765,173 @@ const AdminDashboard = () => {
   };
   
   const handleBulkStatusChange = async (newStatus) => {
-    if (selectedComplaints.length === 0) return;
+    if (selectedComplaints.length === 0) {
+      alert('Please select complaints to update.');
+      return;
+    }
     
     try {
+      console.log('Updating complaints:', selectedComplaints, 'to status:', newStatus);
+      
+      // Ensure selectedComplaints contains only valid integers
+      const validComplaintIds = selectedComplaints
+        .filter(id => id != null && !isNaN(parseInt(id)))
+        .map(id => parseInt(id));
+      
+      if (validComplaintIds.length === 0) {
+        alert('No valid complaints selected.');
+        return;
+      }
+      
+      const updates = { 
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
+      
+      if (newStatus === 'resolved') {
+        updates.resolved_at = new Date().toISOString();
+      } else if (newStatus === 'open') {
+        updates.resolved_at = null;
+      }
+      
+      console.log('Update payload:', updates);
+      console.log('Valid complaint IDs:', validComplaintIds);
+      
       const { error } = await supabase
         .from('complaints')
-        .update({ 
-          status: newStatus,
-          ...(newStatus === 'resolved' ? { resolved_at: new Date().toISOString() } : {})
-        })
-        .in('id', selectedComplaints);
+        .update(updates)
+        .in('id', validComplaintIds);
         
       if (error) throw error;
       
       fetchComplaints(complaintsPage, complaintFilters, complaintsSorting);
       setSelectedComplaints([]);
       
-      alert(`Successfully updated ${selectedComplaints.length} complaints to ${newStatus}`);
+      // Show success notification instead of alert
+      const notification = document.createElement('div');
+      notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300';
+      notification.textContent = `Successfully updated ${validComplaintIds.length} complaints to ${newStatus.replace('_', ' ')}`;
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 300);
+      }, 3000);
       
     } catch (error) {
       console.error('Error updating complaints:', error);
-      alert('Failed to update complaints. Please try again.');
+      
+      // Show error notification instead of alert
+      const errorNotification = document.createElement('div');
+      errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300';
+      let errorMessage = 'Failed to update complaints. Please try again.';
+      
+      if (error.message && error.message.includes('active')) {
+        errorMessage = 'Database schema issue detected. Please contact administrator.';
+      }
+      
+      errorNotification.textContent = errorMessage;
+      document.body.appendChild(errorNotification);
+      
+      setTimeout(() => {
+        errorNotification.style.opacity = '0';
+        setTimeout(() => {
+          if (errorNotification.parentNode) {
+            errorNotification.parentNode.removeChild(errorNotification);
+          }
+        }, 300);
+      }, 5000);
+    }
+  };
+
+  const handleIndividualStatusChange = async (complaintId, newStatus) => {
+    try {
+      console.log('Updating complaint ID:', complaintId, 'to status:', newStatus);
+      
+      // Validate complaint ID
+      const validComplaintId = parseInt(complaintId);
+      if (isNaN(validComplaintId)) {
+        throw new Error('Invalid complaint ID');
+      }
+      
+      const updates = { 
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
+      
+      if (newStatus === 'resolved') {
+        updates.resolved_at = new Date().toISOString();
+      } else if (newStatus === 'open') {
+        updates.resolved_at = null;
+      }
+      
+      console.log('Individual update payload:', updates);
+      
+      // Use simple update without any unnecessary fields
+      const { error } = await supabase
+        .from('complaints')
+        .update(updates)
+        .eq('id', validComplaintId);
+        
+      if (error) {
+        console.error('Supabase error details:', {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+          hint: error.hint
+        });
+        throw error;
+      }
+      
+      // Refresh complaints list
+      fetchComplaints(complaintsPage, complaintFilters, complaintsSorting);
+      
+      // Show success notification
+      const notification = document.createElement('div');
+      notification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300';
+      notification.textContent = `Complaint #${validComplaintId} status updated to ${newStatus.replace('_', ' ')}`;
+      document.body.appendChild(notification);
+      
+      setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 300);
+      }, 3000);
+      
+    } catch (error) {
+      console.error('Error updating complaint status:', error);
+      
+      // Show error notification
+      const errorNotification = document.createElement('div');
+      errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50 transition-all duration-300';
+      
+      let errorMessage = `Failed to update complaint #${complaintId}. Please try again.`;
+      
+      if (error.code === '42703') {
+        errorMessage = 'Database configuration issue detected. Please contact administrator.';
+        console.error('Column does not exist error - likely missing database migration');
+      } else if (error.message) {
+        errorMessage = `Error: ${error.message}`;
+      }
+      
+      errorNotification.textContent = errorMessage;
+      document.body.appendChild(errorNotification);
+      
+      setTimeout(() => {
+        errorNotification.style.opacity = '0';
+        setTimeout(() => {
+          if (errorNotification.parentNode) {
+            errorNotification.parentNode.removeChild(errorNotification);
+          }
+        }, 300);
+      }, 5000);
     }
   };
   
@@ -820,6 +991,11 @@ const AdminDashboard = () => {
       }));
       
       // Convert to CSV
+      if (csvData.length === 0) {
+        alert('No data to export');
+        return;
+      }
+      
       const headers = Object.keys(csvData[0]).join(',');
       const rows = csvData.map(obj => Object.values(obj).map(value => 
         typeof value === 'string' ? `"${value.replace(/"/g, '""')}"` : value
@@ -2055,6 +2231,65 @@ const AdminDashboard = () => {
     }
   }, [analyticsData, activeTab]);
 
+  // Initialize map when map tab becomes active
+  useEffect(() => {
+    if (activeTab === 'map') {
+      // Use requestAnimationFrame to ensure DOM is fully rendered
+      const initMap = () => {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const container = mapContainerRef.current || document.getElementById('admin-map-container');
+            if (container && container.offsetWidth > 0 && container.offsetHeight > 0) {
+              loadMapComponent();
+              // Apply any existing filters to the map
+              if (isFilterApplied) {
+                fetchMapComplaints(complaintFilters);
+              }
+            } else {
+              // Retry if container not ready
+              setTimeout(initMap, 100);
+            }
+          }, 50);
+        });
+      };
+      initMap();
+    }
+    
+    // Cleanup function to prevent memory leaks and DOM conflicts
+    return () => {
+      if (activeTab !== 'map') {
+        // Clean up map instance when leaving map tab
+        if (window.adminMapInstance) {
+          try {
+            // Prevent React from trying to clean up DOM nodes that Leaflet manages
+            const container = mapContainerRef.current || document.getElementById('admin-map-container');
+            if (container) {
+              // Let Leaflet clean up its own DOM nodes
+              window.adminMapInstance.off();
+              window.adminMapInstance.remove();
+              window.adminMapInstance = null;
+              
+              // Clear the container to prevent React conflicts
+              container.innerHTML = '';
+            }
+          } catch (error) {
+            console.warn('Error during map cleanup:', error);
+            // Force clear the container if cleanup fails
+            const container = mapContainerRef.current || document.getElementById('admin-map-container');
+            if (container) {
+              container.innerHTML = '';
+            }
+          }
+        }
+        
+        if (window.adminMapCleanup) {
+          window.adminMapCleanup();
+          window.adminMapCleanup = null;
+        }
+      }
+    };
+  }, [activeTab, complaints]); // Re-initialize when activeTab changes or complaints data updates
+
   // Initialize mini analytics map
   const initializeAnalyticsMiniMap = () => {
     const mapContainer = document.getElementById('analytics-mini-map');
@@ -2143,75 +2378,360 @@ const AdminDashboard = () => {
   
   // Function to load map component in admin dashboard
   const loadMapComponent = () => {
-    if (!window.adminMapInstance) {
-      setTimeout(() => {
-        const adminMapContainer = document.getElementById('admin-map-container');
-        if (!adminMapContainer) return;
-        
-        console.log('Initializing admin map with enhanced features');
+    const adminMapContainer = mapContainerRef.current || document.getElementById('admin-map-container');
+    if (!adminMapContainer) {
+      console.warn('Admin map container not found');
+      return;
+    }
 
-        try {
-          // Create a Leaflet map instance for admin
-          const map = L.map('admin-map-container').setView([40.7128, -74.0060], 10);
-          
-          // Add tile layer
-          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-          }).addTo(map);
-          
-          // Store reference
-          window.adminMapInstance = map;
-          
-          // Initialize drawing controls
-          initializeDrawingControls(map);
-          
-          // Add heatmap layer
-          addHeatmapLayer(map);
-          
-          // Load complaints data
-          if (complaints.length > 0) {
-            addComplaintsToAdminMap(map, complaints);
-          } else {
-            fetchMapComplaints(complaintFilters);
+    // Check if container has proper dimensions
+    const containerRect = adminMapContainer.getBoundingClientRect();
+    if (containerRect.width === 0 || containerRect.height === 0) {
+      console.warn('Admin map container has no dimensions, retrying...');
+      setTimeout(loadMapComponent, 100);
+      return;
+    }
+
+    // Remove existing map instance if it exists
+    if (window.adminMapInstance) {
+      try {
+        // Properly clean up all Leaflet components
+        window.adminMapInstance.off(); // Remove all event listeners
+        window.adminMapInstance.eachLayer((layer) => {
+          try {
+            window.adminMapInstance.removeLayer(layer);
+          } catch (e) {
+            console.warn('Error removing layer:', e);
           }
-          
-          // Add layer control for toggling features
-          const baseLayers = {
-            "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
-            "Satellite": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}')
-          };
-          
-          const overlayLayers = {};
-          if (window.adminHeatmapLayer) {
-            overlayLayers["Heatmap"] = window.adminHeatmapLayer;
-          }
-          
-          L.control.layers(baseLayers, overlayLayers, {
-            position: 'topleft'
-          }).addTo(map);
-          
-        } catch (error) {
-          console.error('Error initializing admin map:', error);
-        }
-      }, 100);
-    } else {
-      console.log('Map already initialized, updating data and features');
-      const map = window.adminMapInstance;
+        });
+        window.adminMapInstance.remove();
+        window.adminMapInstance = null;
+      } catch (error) {
+        console.warn('Error removing existing map:', error);
+        // Force cleanup
+        window.adminMapInstance = null;
+      }
+    }
+    
+    console.log('Initializing admin map with enhanced features');
+    console.log('Map container ready:', {
+      element: adminMapContainer,
+      bounds: containerRect,
+      visible: adminMapContainer.offsetParent !== null
+    });
+
+    try {
+      // Show loading indicator that won't conflict with Leaflet
+      adminMapContainer.innerHTML = `
+        <div id="map-loading" style="
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background-color: #f8f9fa;
+          z-index: 1000;
+        ">
+          <div style="text-align: center;">
+            <div style="font-size: 24px; margin-bottom: 8px;">🗺️</div>
+            <p style="color: #6b7280; font-size: 14px;">Loading map...</p>
+          </div>
+        </div>
+      `;
       
-      // Re-initialize drawing controls if needed
-      if (!window.adminDrawControl) {
-        initializeDrawingControls(map);
+      // Force container dimensions
+      adminMapContainer.style.width = '100%';
+      adminMapContainer.style.height = '600px';
+      adminMapContainer.style.minHeight = '600px';
+      adminMapContainer.style.position = 'relative';
+      adminMapContainer.style.zIndex = '1';
+      
+      console.log('Container dimensions:', {
+        width: adminMapContainer.offsetWidth,
+        height: adminMapContainer.offsetHeight,
+        clientWidth: adminMapContainer.clientWidth,
+        clientHeight: adminMapContainer.clientHeight
+      });
+      
+      // Create a Leaflet map instance for admin (Default to Pakistan - Islamabad)
+      const map = L.map(adminMapContainer, {
+        preferCanvas: false, // Try raster rendering first
+        attributionControl: true,
+        zoomControl: true,
+        scrollWheelZoom: true,
+        doubleClickZoom: true,
+        boxZoom: true,
+        keyboard: true,
+        dragging: true,
+        touchZoom: true,
+        fadeAnimation: false,
+        zoomAnimation: false,
+        markerZoomAnimation: false
+      }).setView([33.6844, 73.0479], 6); // Center on Pakistan
+      
+      // Add tile layer with error handling and multiple sources
+      const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 18,
+        detectRetina: true,
+        crossOrigin: true,
+        subdomains: ['a', 'b', 'c']
+      });
+      
+      tileLayer.on('loading', () => {
+        console.log('Tiles are loading...');
+      });
+      
+      tileLayer.on('load', () => {
+        console.log('Tiles have loaded successfully');
+      });
+      
+      tileLayer.on('tileerror', (e) => {
+        console.warn('Tile loading error:', e);
+      });
+      
+      tileLayer.addTo(map);
+      
+      // Store reference
+      window.adminMapInstance = map;
+      
+      // Remove loading indicator once map is ready
+      const loadingElement = document.getElementById('map-loading');
+      if (loadingElement) {
+        loadingElement.remove();
       }
       
-      // Update heatmap
+      // Add a test marker to verify map is working
+      const testMarker = L.marker([33.6844, 73.0479]).addTo(map);
+      testMarker.bindPopup('<b>Map Test</b><br>Admin Dashboard Map is working!').openPopup();
+      console.log('Test marker added to map');
+      
+      // Initialize drawing controls
+      initializeDrawingControls(map);
+      
+      // Add heatmap layer
       addHeatmapLayer(map);
       
-      // Update complaints data
+      // Load complaints data and fit bounds if available
       if (complaints.length > 0) {
         addComplaintsToAdminMap(map, complaints);
+        
+        // Calculate bounds from complaints and fit map view
+        const validComplaintsWithCoords = complaints.filter(complaint => {
+          if (!complaint.location) return false;
+          
+          let lat = null, lng = null;
+          if (typeof complaint.location === 'string') {
+            const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.?\d*)\s+([-+]?\d+\.?\d*)\s*\)/i);
+            if (pointMatch && pointMatch.length >= 3) {
+              lng = parseFloat(pointMatch[1]);
+              lat = parseFloat(pointMatch[2]);
+            }
+          } else if (typeof complaint.location === 'object' && complaint.location.coordinates) {
+            [lng, lat] = complaint.location.coordinates;
+          }
+          
+          return lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng);
+        });
+
+        if (validComplaintsWithCoords.length > 0) {
+          const bounds = L.latLngBounds();
+          validComplaintsWithCoords.forEach(complaint => {
+            let lat = null, lng = null;
+            if (typeof complaint.location === 'string') {
+              const pointMatch = complaint.location.match(/POINT\s*\(\s*([-+]?\d+\.?\d*)\s+([-+]?\d+\.?\d*)\s*\)/i);
+              if (pointMatch && pointMatch.length >= 3) {
+                lng = parseFloat(pointMatch[1]);
+                lat = parseFloat(pointMatch[2]);
+              }
+            } else if (typeof complaint.location === 'object' && complaint.location.coordinates) {
+              [lng, lat] = complaint.location.coordinates;
+            }
+            
+            if (lat !== null && lng !== null) {
+              bounds.extend([lat, lng]);
+            }
+          });
+          
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [20, 20] });
+          }
+        }
       } else {
         fetchMapComplaints(complaintFilters);
       }
+      
+      // Force a pan to refresh tiles
+      setTimeout(() => {
+        if (window.adminMapInstance) {
+          try {
+            console.log('Forcing map pan to refresh tiles');
+            const currentCenter = window.adminMapInstance.getCenter();
+            window.adminMapInstance.panTo([currentCenter.lat + 0.001, currentCenter.lng + 0.001]);
+            setTimeout(() => {
+              window.adminMapInstance.panTo(currentCenter);
+            }, 100);
+          } catch (error) {
+            console.warn('Error in map pan refresh:', error);
+          }
+        }
+      }, 200);
+      
+      // Add layer control for toggling features
+      const baseLayers = {
+        "OpenStreetMap": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+          maxZoom: 18,
+          crossOrigin: true
+        }),
+        "Satellite": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          attribution: '© Esri',
+          maxZoom: 18
+        })
+      };
+      
+      const overlayLayers = {};
+      if (window.adminHeatmapLayer) {
+        overlayLayers["Heatmap"] = window.adminHeatmapLayer;
+      }
+      
+      L.control.layers(baseLayers, overlayLayers, {
+        position: 'topleft'
+      }).addTo(map);
+      
+      // Force immediate size invalidation
+      setTimeout(() => {
+        if (window.adminMapInstance) {
+          try {
+            console.log('Force invalidating map size immediately');
+            window.adminMapInstance.invalidateSize(true);
+          } catch (error) {
+            console.warn('Error in immediate size invalidation:', error);
+          }
+        }
+      }, 50);
+      
+      // Wait for map to be fully initialized before invalidating size
+      map.whenReady(() => {
+        console.log('Map is ready, invalidating size');
+        
+        // Force multiple size validations
+        setTimeout(() => {
+          if (window.adminMapInstance) {
+            try {
+              console.log('Map ready - invalidating size (100ms)');
+              window.adminMapInstance.invalidateSize(true);
+            } catch (error) {
+              console.warn('Error invalidating map size:', error);
+            }
+          }
+        }, 100);
+        
+        setTimeout(() => {
+          if (window.adminMapInstance) {
+            try {
+              console.log('Map ready - invalidating size (300ms)');
+              window.adminMapInstance.invalidateSize(true);
+            } catch (error) {
+              console.warn('Error in second size invalidation:', error);
+            }
+          }
+        }, 300);
+      });
+      
+      // Additional safety checks for resize after DOM updates
+      setTimeout(() => {
+        if (window.adminMapInstance) {
+          try {
+            console.log('Delayed resize check (500ms)');
+            window.adminMapInstance.invalidateSize(true);
+          } catch (error) {
+            console.warn('Error in delayed map resize:', error);
+          }
+        }
+      }, 500);
+      
+      setTimeout(() => {
+        if (window.adminMapInstance) {
+          try {
+            console.log('Final resize check (1000ms)');
+            window.adminMapInstance.invalidateSize(true);
+          } catch (error) {
+            console.warn('Error in final map resize:', error);
+          }
+        }
+      }, 1000);
+
+      // Add window resize listener to handle container size changes
+      const handleResize = () => {
+        if (window.adminMapInstance && activeTab === 'map') {
+          try {
+            setTimeout(() => {
+              window.adminMapInstance.invalidateSize(true);
+            }, 100);
+          } catch (error) {
+            console.warn('Error in resize handler:', error);
+          }
+        }
+      };
+      
+      window.addEventListener('resize', handleResize);
+      
+      // Store cleanup function
+      window.adminMapCleanup = () => {
+        try {
+          window.removeEventListener('resize', handleResize);
+          
+          if (window.adminMapInstance) {
+            // Remove all layers first
+            window.adminMapInstance.eachLayer((layer) => {
+              try {
+                window.adminMapInstance.removeLayer(layer);
+              } catch (e) {
+                console.warn('Error removing layer during cleanup:', e);
+              }
+            });
+            
+            // Remove all event listeners
+            window.adminMapInstance.off();
+            
+            // Remove the map instance
+            window.adminMapInstance.remove();
+            window.adminMapInstance = null;
+          }
+          
+          // Clear the container
+          const container = mapContainerRef.current || document.getElementById('admin-map-container');
+          if (container && container.parentNode) {
+            container.innerHTML = '';
+          }
+        } catch (error) {
+          console.warn('Error in map cleanup:', error);
+          // Force cleanup
+          window.adminMapInstance = null;
+        }
+      };
+      
+    } catch (error) {
+      console.error('Error initializing admin map:', error);
+      // Show error message in the map container
+      adminMapContainer.innerHTML = `
+        <div class="absolute inset-0 flex items-center justify-center bg-red-50">
+          <div class="text-center">
+            <div class="text-red-500 mb-2">⚠️</div>
+            <p class="text-red-600 text-sm">Failed to load map: ${error.message}</p>
+            <button onclick="setTimeout(() => window.loadMapComponent(), 100)" class="mt-2 px-3 py-1 bg-red-600 text-white rounded text-xs hover:bg-red-700">
+              Retry
+            </button>
+          </div>
+        </div>
+      `;
+      
+      // Make retry function globally available
+      window.loadMapComponent = loadMapComponent;
     }
   };
   
@@ -2364,15 +2884,7 @@ const AdminDashboard = () => {
   // Enhance the map tab initialization to properly handle filters
   const handleMapTabClick = () => {
     setActiveTab('map');
-    
-    // Initialize or refresh the map
-    setTimeout(() => {
-      loadMapComponent();
-      // Apply any existing filters to the map
-      if (isFilterApplied) {
-        fetchMapComplaints(complaintFilters);
-      }
-    }, 100);
+    // Map initialization will be handled by useEffect
   };
   
   if (loading) {
@@ -2384,90 +2896,135 @@ const AdminDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Sidebar */}
-      <div className="fixed inset-y-0 left-0 w-64 bg-indigo-800 text-white">
-        <div className="h-16 flex items-center justify-center">
-          <h1 className="text-xl font-bold">Admin Dashboard</h1>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-100">
+      {/* Enhanced Sidebar */}
+      <div className="fixed inset-y-0 left-0 w-64 bg-gradient-to-b from-indigo-900 via-indigo-800 to-indigo-900 text-white shadow-xl">
+        <div className="h-16 flex items-center justify-center bg-indigo-800/50 backdrop-blur-sm">
+          <div className="flex items-center space-x-2">
+            <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
+              <Settings className="h-5 w-5 text-indigo-600" />
+            </div>
+            <h1 className="text-xl font-bold">Admin Portal</h1>
+          </div>
         </div>
-        <nav className="mt-6">
-          <div>
+        <nav className="mt-6 px-3">
+          <div className="space-y-1">
             <button
               onClick={() => handleTabChange('overview')}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'overview' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'overview' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <Home className="h-5 w-5 mr-3" />
               Overview
+              {activeTab === 'overview' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
             <button
               onClick={() => handleTabChange('users')}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'users' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'users' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <Users className="h-5 w-5 mr-3" />
               User Management
+              {activeTab === 'users' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
             <button
               onClick={() => handleTabChange('departments')}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'departments' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'departments' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <Building className="h-5 w-5 mr-3" />
               Departments
+              {activeTab === 'departments' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
             <button
               onClick={() => handleTabChange('complaints')}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'complaints' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'complaints' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <AlertTriangle className="h-5 w-5 mr-3" />
               Complaints
+              {stats.openComplaints > 0 && (
+                <span className="ml-auto bg-red-500 text-white text-xs px-2 py-1 rounded-full">
+                  {stats.openComplaints}
+                </span>
+              )}
+              {activeTab === 'complaints' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
             <button
               onClick={() => handleMapTabClick()}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'map' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'map' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <MapIcon className="h-5 w-5 mr-3" />
               Map View
+              {activeTab === 'map' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
             <button
               onClick={() => handleTabChange('analytics')}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'analytics' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'analytics' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <BarChart2 className="h-5 w-5 mr-3" />
               Analytics
+              {activeTab === 'analytics' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
             <button
               onClick={() => handleTabChange('settings')}
-              className={`w-full flex items-center px-6 py-2.5 text-sm ${
-                activeTab === 'settings' ? 'bg-indigo-900 font-medium' : 'hover:bg-indigo-700'
+              className={`w-full flex items-center px-3 py-3 text-sm rounded-lg transition-all duration-200 ${
+                activeTab === 'settings' 
+                  ? 'bg-white/20 font-medium text-white shadow-lg backdrop-blur-sm' 
+                  : 'hover:bg-white/10 text-indigo-100 hover:text-white'
               }`}
             >
               <Settings className="h-5 w-5 mr-3" />
               Settings
+              {activeTab === 'settings' && (
+                <div className="ml-auto w-2 h-2 bg-white rounded-full"></div>
+              )}
             </button>
           </div>
         </nav>
-        <div className="absolute bottom-0 w-full p-4 border-t border-indigo-700">
+        <div className="absolute bottom-0 w-full p-4 border-t border-indigo-700/50 bg-indigo-900/50 backdrop-blur-sm">
           <button
             onClick={() => navigate('/dashboard')}
-            className="w-full flex items-center px-4 py-2 text-indigo-200 hover:text-white mb-3"
+            className="w-full flex items-center px-4 py-2.5 text-indigo-200 hover:text-white mb-3 rounded-lg hover:bg-white/10 transition-all duration-200"
           >
             <ArrowLeft className="h-5 w-5 mr-3" />
             Back to User Dashboard
           </button>
           <button
             onClick={handleLogout}
-            className="w-full flex items-center px-4 py-2 text-indigo-200 hover:text-white"
+            className="w-full flex items-center px-4 py-2.5 text-indigo-200 hover:text-white rounded-lg hover:bg-white/10 transition-all duration-200"
           >
             <LogOut className="h-5 w-5 mr-3" />
             Logout
@@ -2477,29 +3034,49 @@ const AdminDashboard = () => {
 
       {/* Main content */}
       <div className="pl-64">
-        {/* Header */}
-        <header className="bg-white shadow">
+        {/* Enhanced Header */}
+        <header className="bg-white/80 backdrop-blur-sm shadow-lg border-b border-gray-200">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-gray-900">
-              {activeTab === 'overview' && 'Dashboard Overview'}
-              {activeTab === 'users' && 'User Management'}
-              {activeTab === 'departments' && 'Department Management'}
-              {activeTab === 'complaints' && 'Complaints Management'}
-              {activeTab === 'map' && 'Map View'}
-              {activeTab === 'analytics' && 'Analytics'}
-              {activeTab === 'settings' && 'System Settings'}
-            </h1>
+            <div>
+              <h1 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-indigo-600 bg-clip-text text-transparent">
+                {activeTab === 'overview' && 'Dashboard Overview'}
+                {activeTab === 'users' && 'User Management'}
+                {activeTab === 'departments' && 'Department Management'}
+                {activeTab === 'complaints' && 'Complaints Management'}
+                {activeTab === 'map' && 'Map View'}
+                {activeTab === 'analytics' && 'Analytics'}
+                {activeTab === 'settings' && 'System Settings'}
+              </h1>
+              <p className="text-sm text-gray-600 mt-1">
+                {activeTab === 'overview' && 'Monitor system performance and key metrics'}
+                {activeTab === 'users' && 'Manage user accounts and permissions'}
+                {activeTab === 'departments' && 'Organize departments and assignments'}
+                {activeTab === 'complaints' && 'Track and resolve complaints'}
+                {activeTab === 'map' && 'Visualize complaints geographically'}
+                {activeTab === 'analytics' && 'Advanced analytics and insights'}
+                {activeTab === 'settings' && 'Configure system settings'}
+              </p>
+            </div>
             <div className="flex items-center space-x-4">
               <div className="relative">
-                <button className="p-1 rounded-full text-gray-500 hover:text-gray-600 focus:outline-none">
-                  <Bell className="h-6 w-6" />
-                  <span className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500"></span>
+                <button className="p-2 rounded-lg bg-gray-100 text-gray-500 hover:text-gray-600 hover:bg-gray-200 focus:outline-none transition-all duration-200">
+                  <Bell className="h-5 w-5" />
+                  {stats.openComplaints > 0 && (
+                    <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">
+                      {stats.openComplaints > 9 ? '9+' : stats.openComplaints}
+                    </span>
+                  )}
                 </button>
               </div>
-              <span className="text-sm text-gray-600">
-                Welcome, {user?.first_name} {user?.last_name}
-              </span>
-              <div className="h-8 w-8 rounded-full bg-indigo-600 flex items-center justify-center text-white">
+              <div className="hidden sm:block text-right">
+                <div className="text-sm font-medium text-gray-900">
+                  {user?.first_name} {user?.last_name}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {user?.roles?.name} • {user?.departments?.name || 'No Department'}
+                </div>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center text-white font-semibold shadow-lg">
                 {user?.first_name?.charAt(0)}
               </div>
             </div>
@@ -2507,7 +3084,7 @@ const AdminDashboard = () => {
         </header>
 
         {/* Content area */}
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
           {/* Overview Tab - Using DashboardStats component */}
           {activeTab === 'overview' && (
             <DashboardStats 
@@ -2557,6 +3134,7 @@ const AdminDashboard = () => {
               selectedComplaints={selectedComplaints}
               setSelectedComplaints={setSelectedComplaints}
               handleBulkStatusChange={handleBulkStatusChange}
+              handleIndividualStatusChange={handleIndividualStatusChange}
               categories={categories}
               handleExportComplaints={handleExportComplaints}
               isExporting={isExporting}
@@ -2566,258 +3144,291 @@ const AdminDashboard = () => {
 
           {/* Enhanced Map View with Analytics Integration */}
           {activeTab === 'map' && (
-            <div className="bg-white shadow overflow-hidden sm:rounded-lg p-4">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
-                <div>
-                  <h3 className="text-lg leading-6 font-medium text-gray-900">Complaints Map</h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Geographic distribution and clustering analysis
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                  {/* Status filter dropdown */}
-                  <select
-                    className="block pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                    onChange={(e) => {
-                      setComplaintFilters(prev => ({...prev, status: e.target.value}));
-                      fetchMapComplaints({...complaintFilters, status: e.target.value});
-                    }}
-                    value={complaintFilters.status}
-                  >
-                    <option value="">All Statuses</option>
-                    <option value="open">Open</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="resolved">Resolved</option>
-                  </select>
-                  
-                  {/* Category filter dropdown */}
-                  <select
-                    className="block pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                    onChange={(e) => {
-                      setComplaintFilters(prev => ({...prev, category: e.target.value}));
-                      fetchMapComplaints({...complaintFilters, category: e.target.value});
-                    }}
-                    value={complaintFilters.category}
-                  >
-                    <option value="">All Categories</option>
-                    {categories.map(cat => (
-                      <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
-                    ))}
-                  </select>
-                  
-                  <button
-                    onClick={() => fetchGeospatialAnalysis().then(geoData => {
-                      console.log('Refreshed geospatial analysis:', geoData);
-                      setAnalyticsData(prev => ({
-                        ...prev,
-                        geospatialData: geoData.clusters,
-                        heatmapData: geoData.heatmap,
-                        densityAnalysis: geoData.density
-                      }));
-                    })}
-                    className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                  >
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Refresh Analysis
-                  </button>
-                  
-                  <button
-                    onClick={() => navigate('/map')}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
-                  >
-                    Open Full Map
-                  </button>
-                  
-                  {isFilterApplied && (
-                    <button
-                      onClick={() => {
-                        clearFilters();
-                        fetchMapComplaints({
-                          status: '',
-                          category: '',
-                          startDate: '',
-                          endDate: '',
-                          search: '',
-                        });
-                      }}
-                      className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50"
-                    >
-                      Clear Filters
-                    </button>
-                  )}
-                </div>
-              </div>
-              
-              {/* Map Analytics Summary */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <div className="text-sm font-medium text-gray-500">Total Mapped</div>
-                  <div className="text-2xl font-bold text-gray-900">
-                    {analyticsData.heatmapData?.length || 0}
-                  </div>
-                </div>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <div className="text-sm font-medium text-gray-500">Clusters</div>
-                  <div className="text-2xl font-bold text-indigo-600">
-                    {analyticsData.geospatialData?.length || 0}
-                  </div>
-                </div>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <div className="text-sm font-medium text-gray-500">High Density</div>
-                  <div className="text-2xl font-bold text-red-600">
-                    {analyticsData.densityAnalysis?.filter(d => d.density === 'high').length || 0}
-                  </div>
-                </div>
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <div className="text-sm font-medium text-gray-500">Coverage</div>
-                  <div className="text-2xl font-bold text-green-600">
-                    {complaints.length > 0 ? 
-                      ((analyticsData.heatmapData?.length || 0) / complaints.length * 100).toFixed(0) : 0}%
+            <div className="space-y-6">
+              {/* Map Header */}
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-lg shadow-lg">
+                <div className="px-6 py-4">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-white">Interactive Complaints Map</h3>
+                      <p className="text-blue-100 text-sm mt-1">
+                        Geographic distribution and clustering analysis with real-time data
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <div className="bg-white/20 rounded-lg px-3 py-1 text-white text-sm">
+                        {complaints.length} Total
+                      </div>
+                      <div className="bg-white/20 rounded-lg px-3 py-1 text-white text-sm">
+                        {analyticsData.heatmapData?.length || 0} Mapped
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-              
+
+              {/* Map Controls and Filters */}
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <div className="flex flex-col lg:flex-row gap-4 mb-6">
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Status Filter</label>
+                      <select
+                        className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-lg transition-all duration-200"
+                        onChange={(e) => {
+                          setComplaintFilters(prev => ({...prev, status: e.target.value}));
+                          fetchMapComplaints({...complaintFilters, status: e.target.value});
+                        }}
+                        value={complaintFilters.status}
+                      >
+                        <option value="">All Statuses</option>
+                        <option value="open">🔴 Open</option>
+                        <option value="in_progress">🟡 In Progress</option>
+                        <option value="resolved">🟢 Resolved</option>
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Category Filter</label>
+                      <select
+                        className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-lg transition-all duration-200"
+                        onChange={(e) => {
+                          setComplaintFilters(prev => ({...prev, category: e.target.value}));
+                          fetchMapComplaints({...complaintFilters, category: e.target.value});
+                        }}
+                        value={complaintFilters.category}
+                      >
+                        <option value="">All Categories</option>
+                        {categories.map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.icon} {cat.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Heatmap</label>
+                      <button
+                        onClick={toggleHeatmap}
+                        className={`w-full flex items-center justify-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium transition-all duration-200 ${
+                          heatmapVisible 
+                            ? 'bg-red-50 text-red-700 border-red-300' 
+                            : 'bg-white text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {heatmapVisible ? 'Hide Heatmap' : 'Show Heatmap'}
+                      </button>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Actions</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => fetchGeospatialAnalysis().then(geoData => {
+                            console.log('Refreshed geospatial analysis:', geoData);
+                            setAnalyticsData(prev => ({
+                              ...prev,
+                              geospatialData: geoData.clusters,
+                              heatmapData: geoData.heatmap,
+                              densityAnalysis: geoData.density
+                            }));
+                          })}
+                          className="flex-1 inline-flex items-center justify-center px-3 py-2 border border-gray-300 shadow-sm text-xs font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 transition-all duration-200"
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Refresh
+                        </button>
+                        
+                        {isFilterApplied && (
+                          <button
+                            onClick={() => {
+                              clearFilters();
+                              fetchMapComplaints({
+                                status: '',
+                                category: '',
+                                startDate: '',
+                                endDate: '',
+                                search: '',
+                              });
+                            }}
+                            className="flex-1 inline-flex items-center justify-center px-3 py-2 border border-gray-300 text-xs font-medium rounded-lg shadow-sm text-gray-700 bg-white hover:bg-gray-50 transition-all duration-200"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Map Analytics Summary */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg border border-blue-200">
+                    <div className="flex items-center">
+                      <MapIcon className="h-8 w-8 text-blue-600 mr-3" />
+                      <div>
+                        <div className="text-sm font-medium text-blue-700">Total Mapped</div>
+                        <div className="text-2xl font-bold text-blue-900">
+                          {analyticsData.heatmapData?.length || 0}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-lg border border-indigo-200">
+                    <div className="flex items-center">
+                      <Target className="h-8 w-8 text-indigo-600 mr-3" />
+                      <div>
+                        <div className="text-sm font-medium text-indigo-700">Clusters</div>
+                        <div className="text-2xl font-bold text-indigo-900">
+                          {analyticsData.geospatialData?.length || 0}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-gradient-to-br from-red-50 to-red-100 p-4 rounded-lg border border-red-200">
+                    <div className="flex items-center">
+                      <AlertTriangle className="h-8 w-8 text-red-600 mr-3" />
+                      <div>
+                        <div className="text-sm font-medium text-red-700">High Density</div>
+                        <div className="text-2xl font-bold text-red-900">
+                          {analyticsData.densityAnalysis?.filter(d => d.density === 'high').length || 0}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg border border-green-200">
+                    <div className="flex items-center">
+                      <BarChart2 className="h-8 w-8 text-green-600 mr-3" />
+                      <div>
+                        <div className="text-sm font-medium text-green-700">Coverage</div>
+                        <div className="text-2xl font-bold text-green-900">
+                          {complaints.length > 0 ? 
+                            ((analyticsData.heatmapData?.length || 0) / complaints.length * 100).toFixed(0) : 0}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Enhanced Drawing Controls */}
-              <div className="mb-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <div className="bg-white border rounded-lg p-4">
-                  <h4 className="text-sm font-medium text-gray-900 mb-3">Drawing Tools</h4>
-                  <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                    <Edit3 className="h-4 w-4 mr-2" />
+                    Drawing Tools
+                  </h4>
+                  <div className="space-y-2">
                     <button
                       onClick={() => setDrawingTool('polygon')}
-                      className={`flex items-center justify-center px-3 py-2 text-xs rounded ${
+                      className={`w-full flex items-center px-3 py-2 text-xs rounded-lg transition-all duration-200 ${
                         drawingTool === 'polygon' 
-                          ? 'bg-blue-100 text-blue-700 border-blue-300' 
-                          : 'bg-gray-50 text-gray-700 border-gray-300'
-                      } border hover:bg-blue-50`}
+                          ? 'bg-blue-100 text-blue-700 border border-blue-300' 
+                          : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                      }`}
                     >
-                      <Triangle className="h-4 w-4 mr-1" />
-                      Polygon
+                      Polygon Analysis
                     </button>
                     <button
                       onClick={() => setDrawingTool('circle')}
-                      className={`flex items-center justify-center px-3 py-2 text-xs rounded ${
+                      className={`w-full flex items-center px-3 py-2 text-xs rounded-lg transition-all duration-200 ${
                         drawingTool === 'circle' 
-                          ? 'bg-red-100 text-red-700 border-red-300' 
-                          : 'bg-gray-50 text-gray-700 border-gray-300'
-                      } border hover:bg-red-50`}
+                          ? 'bg-blue-100 text-blue-700 border border-blue-300' 
+                          : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                      }`}
                     >
-                      <Circle className="h-4 w-4 mr-1" />
-                      Circle
-                    </button>
-                    <button
-                      onClick={() => setDrawingTool('rectangle')}
-                      className={`flex items-center justify-center px-3 py-2 text-xs rounded ${
-                        drawingTool === 'rectangle' 
-                          ? 'bg-green-100 text-green-700 border-green-300' 
-                          : 'bg-gray-50 text-gray-700 border-gray-300'
-                      } border hover:bg-green-50`}
-                    >
-                      <Square className="h-4 w-4 mr-1" />
-                      Rectangle
+                      Buffer Analysis
                     </button>
                     <button
                       onClick={clearDrawnFeatures}
-                      className="flex items-center justify-center px-3 py-2 text-xs rounded bg-red-50 text-red-700 border border-red-300 hover:bg-red-100"
+                      className="w-full flex items-center px-3 py-2 text-xs rounded-lg bg-red-50 text-red-700 hover:bg-red-100 transition-all duration-200"
                     >
-                      <X className="h-4 w-4 mr-1" />
-                      Clear
+                      Clear Drawings
                     </button>
                   </div>
                 </div>
 
-                <div className="bg-white border rounded-lg p-4">
-                  <h4 className="text-sm font-medium text-gray-900 mb-3">Layer Controls</h4>
+                <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                    <Layers className="h-4 w-4 mr-2" />
+                    Map Layers
+                  </h4>
                   <div className="space-y-2">
-                    <label className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={heatmapVisible}
-                        onChange={toggleHeatmap}
-                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="ml-2 text-sm text-gray-700">Show Heatmap</span>
-                    </label>
                     <label className="flex items-center">
                       <input
                         type="checkbox"
                         checked={clusteringEnabled}
                         onChange={(e) => setClusteringEnabled(e.target.checked)}
-                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 mr-2"
                       />
-                      <span className="ml-2 text-sm text-gray-700">Enable Clustering</span>
+                      <span className="text-xs text-gray-700">Clustering</span>
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={heatmapVisible}
+                        onChange={toggleHeatmap}
+                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 mr-2"
+                      />
+                      <span className="text-xs text-gray-700">Heatmap</span>
                     </label>
                   </div>
                 </div>
 
-                <div className="bg-white border rounded-lg p-4">
-                  <h4 className="text-sm font-medium text-gray-900 mb-3">Spatial Analysis</h4>
-                  <div className="text-sm text-gray-600">
-                    <p>Drawn features: {drawnFeatures.length}</p>
+                <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export Data
+                  </h4>
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => exportAnalyticsData('geospatial')}
+                      disabled={isExporting}
+                      className="w-full flex items-center px-3 py-2 text-xs rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition-all duration-200 disabled:opacity-50"
+                    >
+                      {isExporting ? 'Exporting...' : 'Export GeoData'}
+                    </button>
+                    <button
+                      onClick={() => navigate('/map')}
+                      className="w-full flex items-center px-3 py-2 text-xs rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all duration-200"
+                    >
+                      Full Screen Map
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                  <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                    <Activity className="h-4 w-4 mr-2" />
+                    Analysis Results
+                  </h4>
+                  <div className="space-y-2 text-xs text-gray-600">
+                    <div>Drawn Features: {drawnFeatures.length}</div>
+                    <div>Active Analysis: {spatialAnalysisResults ? Object.keys(spatialAnalysisResults).length : 0}</div>
                     {spatialAnalysisResults && Object.keys(spatialAnalysisResults).length > 0 && (
-                      <p className="text-green-600">Analysis available</p>
+                      <div className="text-blue-600">
+                        Click features for details
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
               
-              {/* Map container */}
-              <div id="admin-map-container" className="bg-gray-100 h-[600px] rounded-lg mb-4"></div>
-              
-              {/* Enhanced Map legend and controls */}
-              <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-medium text-gray-900 mb-2">Status Legend</h4>
-                  <div className="flex flex-wrap gap-4 text-sm">
-                    <div className="flex items-center">
-                      <span className="w-4 h-4 rounded-full bg-red-500 inline-block mr-2"></span>
-                      <span>Open ({stats.openComplaints})</span>
-                    </div>
-                    <div className="flex items-center">
-                      <span className="w-4 h-4 rounded-full bg-yellow-500 inline-block mr-2"></span>
-                      <span>In Progress ({stats.inProgressComplaints})</span>
-                    </div>
-                    <div className="flex items-center">
-                      <span className="w-4 h-4 rounded-full bg-green-500 inline-block mr-2"></span>
-                      <span>Resolved ({stats.resolvedComplaints})</span>
-                    </div>
-                    <div className="flex items-center">
-                      <span className="w-4 h-4 rounded-full inline-block mr-2 border-2 border-gray-500"></span>
-                      <span>Click clusters to zoom in</span>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-gray-900 mb-2">Map Controls</h4>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => {
-                        if (window.adminMapInstance && analyticsData.heatmapData.length > 0) {
-                          // Fit map to show all complaints
-                          const bounds = L.latLngBounds(analyticsData.heatmapData.map(point => [point[0], point[1]]));
-                          window.adminMapInstance.fitBounds(bounds, { padding: [20, 20] });
-                        }
-                      }}
-                      className="px-3 py-1 text-xs bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200"
-                    >
-                      Fit All
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (window.adminMapInstance) {
-                          window.adminMapInstance.setView([40.7128, -74.0060], 10);
-                        }
-                      }}
-                      className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-                    >
-                      Reset View
-                    </button>
-                    <button
-                      onClick={() => exportAnalyticsData('geospatial')}
-                      className="px-3 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
-                    >
-                      Export Data
-                    </button>
-                  </div>
+              {/* Main Map Container */} 
+              <div className="bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden">
+                <div 
+                  ref={mapContainerRef}
+                  id="admin-map-container" 
+                  className="w-full relative admin-map-wrapper"
+                  style={{ 
+                    minHeight: '600px', 
+                    height: '600px',
+                    maxHeight: '600px',
+                    position: 'relative',
+                    zIndex: 1
+                  }}
+                  suppressHydrationWarning={true}
+                >
+                  {/* Loading indicator - will be replaced by Leaflet */}
                 </div>
               </div>
             </div>

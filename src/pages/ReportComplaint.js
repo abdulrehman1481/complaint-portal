@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import '../styles/map-fixes.css';
 import $ from 'jquery'; // Import jQuery
 import { toWKT } from '../utils/locationFormatter';
 import { 
@@ -123,8 +124,15 @@ const ReportComplaint = () => {
 
   useEffect(() => {
     if (!loading && !mapInitialized && mapContainer.current) {
-      initializeMap();
-      setMapInitialized(true);
+      // Add a small delay to ensure DOM is ready
+      const timer = setTimeout(() => {
+        if (mapContainer.current) {
+          initializeMap();
+          setMapInitialized(true);
+        }
+      }, 300);
+      
+      return () => clearTimeout(timer);
     }
   }, [loading, mapInitialized]);
 
@@ -132,79 +140,105 @@ const ReportComplaint = () => {
     if (map.current || !mapContainer.current) return;
     
     try {
-      const $container = $(mapContainer.current);
+      // Ensure container is visible and has dimensions
+      const container = mapContainer.current;
+      const $container = $(container);
+      
       if ($container.length === 0) {
         console.error('Map container not found in the DOM');
         return;
       }
       
+      // Force container to be visible and have dimensions
+      container.style.display = 'block';
+      container.style.position = 'relative';
+      
       if ($container.width() === 0 || $container.height() === 0) {
-        console.warn('Map container has zero width or height');
+        console.warn('Map container has zero dimensions, setting default');
+        container.style.width = '100%';
+        container.style.height = '256px';
+        container.style.minHeight = '256px';
       }
       
-      map.current = L.map(mapContainer.current).setView(
-        [formData.location.latitude || 40.7128, formData.location.longitude || -74.0060], 
-        formData.location.longitude ? 15 : 10
-      );
-      
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map.current);
-      
-      if (formData.location.latitude && formData.location.longitude) {
-        marker.current = L.marker([formData.location.latitude, formData.location.longitude], {
-          draggable: true
-        }).addTo(map.current);
-        
-        marker.current.on('dragend', (e) => {
-          const { lat, lng } = e.target.getLatLng();
-          updateLocation(lat, lng);
-        });
-      }
-      
-      map.current.on('click', (e) => {
-        const { lat, lng } = e.latlng;
-        
-        if (!marker.current) {
-          marker.current = L.marker([lat, lng], {
-            draggable: true
-          }).addTo(map.current);
-          
-          marker.current.on('dragend', (e) => {
-            const { lat, lng } = e.target.getLatLng();
-            updateLocation(lat, lng);
-          });
-        } else {
-          marker.current.setLatLng([lat, lng]);
-        }
-        
-        updateLocation(lat, lng);
-      });
-      
-      // Try to get user location
-      if (!formData.location.latitude || !formData.location.longitude) {
-        setTimeout(() => {
+      // Wait for container to be properly sized
+      setTimeout(() => {
+        if (!map.current && mapContainer.current) {
           try {
-            if (navigator.geolocation) {
-              navigator.geolocation.getCurrentPosition(
-                (position) => {
-                  const lat = position.coords.latitude;
-                  const lng = position.coords.longitude;
-                  map.current.setView([lat, lng], 15);
-                  updateLocation(lat, lng);
-                },
-                (error) => {
-                  console.warn('Geolocation error:', error);
-                }
-              );
+            map.current = L.map(mapContainer.current).setView(
+              [formData.location.latitude || 33.6844, formData.location.longitude || 73.0479], 
+              formData.location.longitude ? 15 : 10
+            );
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '© OpenStreetMap contributors'
+            }).addTo(map.current);
+            
+            if (formData.location.latitude && formData.location.longitude) {
+              marker.current = L.marker([formData.location.latitude, formData.location.longitude], {
+                draggable: true
+              }).addTo(map.current);
+              
+              marker.current.on('dragend', (e) => {
+                const { lat, lng } = e.target.getLatLng();
+                updateLocation(lat, lng);
+              });
             }
-          } catch (e) {
-            console.error('Error triggering geolocation:', e);
+            
+            map.current.on('click', (e) => {
+              const { lat, lng } = e.latlng;
+              
+              if (!marker.current) {
+                marker.current = L.marker([lat, lng], {
+                  draggable: true
+                }).addTo(map.current);
+                
+                marker.current.on('dragend', (e) => {
+                  const { lat, lng } = e.target.getLatLng();
+                  updateLocation(lat, lng);
+                });
+              } else {
+                marker.current.setLatLng([lat, lng]);
+              }
+              
+              updateLocation(lat, lng);
+            });
+            
+            // Try to get user location
+            if (!formData.location.latitude || !formData.location.longitude) {
+              if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                  (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    map.current.setView([lat, lng], 15);
+                    updateLocation(lat, lng);
+                  },
+                  (error) => {
+                    console.warn('Geolocation error:', error);
+                  },
+                  {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 300000 // 5 minutes
+                  }
+                );
+              }
+            }
+            
+            // Force map to resize after initialization
+            setTimeout(() => {
+              if (map.current) {
+                map.current.invalidateSize();
+              }
+            }, 200);
+            
+            console.log("Map initialized successfully");
+          } catch (innerError) {
+            console.error("Error in inner map initialization:", innerError);
           }
-        }, 1000);
-      }
+        }
+      }, 100);
       
-      console.log("Map initialized successfully");
     } catch (error) {
       console.error("Error initializing map:", error);
       setError("Failed to initialize map. Please refresh the page and try again.");
@@ -391,10 +425,7 @@ const ReportComplaint = () => {
           const { latitude, longitude } = position.coords;
           
           if (map.current) {
-            map.current.flyTo({
-              center: [longitude, latitude],
-              zoom: 15
-            });
+            map.current.setView([latitude, longitude], 15);
             
             if (!marker.current) {
               marker.current = L.marker([latitude, longitude], {
@@ -418,6 +449,11 @@ const ReportComplaint = () => {
         (err) => {
           console.warn('Error getting location:', err);
           setError('Unable to access your location. Please check your browser permissions.');
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 300000
         }
       );
     } else {
@@ -641,8 +677,8 @@ const ReportComplaint = () => {
             </div>
 
             <div className="mt-8">
-              <div className="bg-gray-200 h-64 rounded-lg mb-4 relative map-container">
-                <div ref={mapContainer} className="absolute inset-0 rounded-lg" style={{width: '100%', height: '100%'}} />
+              <div className="bg-gray-200 h-64 rounded-lg mb-4 relative map-container" style={{ minHeight: '256px' }}>
+                <div ref={mapContainer} className="absolute inset-0 rounded-lg" style={{width: '100%', height: '100%', minHeight: '256px'}} />
                 <button
                   type="button"
                   onClick={handleCenterOnUserLocation}

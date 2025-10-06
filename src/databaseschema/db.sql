@@ -165,7 +165,7 @@ begin
     ) values (
       new.id,
       new.status,
-      (select auth.uid() from auth.users where active = true limit 1)
+      auth.uid()
     );
   end if;
   return new;
@@ -188,8 +188,8 @@ returns void as $$
 declare
   current_user_id uuid;
 begin
-  -- Try to get the current user ID
-  current_user_id := (select auth.uid() from auth.users where active = true limit 1);
+  -- Get the current user ID directly
+  current_user_id := auth.uid();
   
   insert into public.activity_logs (
     user_id,

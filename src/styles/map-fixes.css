@@ -1,0 +1,68 @@
+/* Map container fixes for better display */
+.leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0.5rem;
+}
+
+/* Ensure proper map rendering */
+.leaflet-map-pane {
+  z-index: auto !important;
+}
+
+/* Fix for custom complaint markers */
+.custom-complaint-marker {
+  border: none !important;
+  background: none !important;
+}
+
+/* User location marker styling */
+.user-location-marker {
+  border: none !important;
+  background: none !important;
+}
+
+/* Map container minimum heights */
+.map-container {
+  min-height: 256px;
+  position: relative;
+}
+
+.user-dashboard-map {
+  min-height: 300px;
+  height: 300px;
+}
+
+/* Fix for notification styling */
+.status-notification {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.status-notification.success {
+  background-color: #10B981;
+  color: white;
+}
+
+.status-notification.error {
+  background-color: #EF4444;
+  color: white;
+}
+
+/* Leaflet popup fixes */
+.leaflet-popup-content {
+  margin: 0.5rem !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-popup-content h6 {
+  margin-bottom: 0.5rem !important;
+  font-weight: 600 !important;
+}

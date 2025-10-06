@@ -1,5 +1,45 @@
 /* Enhanced Leaflet styles for Admin Dashboard */
 
+/* Admin Map Container Styles */
+.admin-map-wrapper {
+  width: 100% !important;
+  height: 600px !important;
+  min-height: 600px !important;
+  position: relative !important;
+}
+
+#admin-map-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 600px !important;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+}
+
+#admin-map-container .leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 600px !important;
+  background-color: #f8f9fa !important;
+  border-radius: 8px;
+  z-index: 1 !important;
+}
+
+/* Ensure map tiles are visible */
+#admin-map-container .leaflet-tile-pane {
+  z-index: 2 !important;
+}
+
+#admin-map-container .leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* Loading Overlay */
+#admin-map-container .absolute {
+  z-index: 1000;
+}
+
 /* Leaflet Draw Styles */
 .leaflet-draw-toolbar a {
   background-color: #fff;
