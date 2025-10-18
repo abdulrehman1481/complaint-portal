@@ -564,6 +564,19 @@ useEffect(() => {
 
   fetchUserAndData();
 }, [navigate]);
+
+// Add a separate effect to refetch complaints periodically or when needed
+useEffect(() => {
+  if (user && !loading) {
+    // Set up an interval to refetch complaints every 30 seconds
+    const intervalId = setInterval(() => {
+      console.log('Refreshing complaints data...');
+      fetchComplaints(user);
+    }, 30000);
+
+    return () => clearInterval(intervalId);
+  }
+}, [user, loading]);
   const fetchCategories = async () => {
     try {
       const { data, error } = await supabase
@@ -884,7 +897,10 @@ const fetchComplaints = async (userData) => {
             Math.abs(parsedLocation.longitude) <= 180) {
             
           // Check if location is within allowed service area (RWP/ISB)
-          if (isWithinAllowedArea(parsedLocation.longitude, parsedLocation.latitude)) {
+          // For demo purposes, we'll be more flexible with the geofencing
+          const withinServiceArea = isWithinAllowedArea(parsedLocation.longitude, parsedLocation.latitude);
+          
+          if (withinServiceArea) {
             complaint.parsedLocation = parsedLocation;
             // Store coordinates in GeoJSON format [longitude, latitude]
             complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude];
@@ -895,12 +911,13 @@ const fetchComplaints = async (userData) => {
             // Add service area validation flag
             complaint.withinServiceArea = true;
           } else {
-            // Location is outside service area - exclude or flag
+            // For demo purposes, still show the complaint but flag it
             console.warn(`Complaint ${complaint.id} is outside service area:`, parsedLocation);
-            complaint.parsedLocation = null;
-            complaint.coordinates = null;
+            complaint.parsedLocation = parsedLocation; // Still include it
+            complaint.coordinates = [parsedLocation.longitude, parsedLocation.latitude]; // Still include coordinates
             complaint.withinServiceArea = false;
             complaint.locationNote = 'Outside service area (RWP/ISB)';
+            complaint.needsLocationName = true; // Still try to get location name
           }
         } else {
           complaint.parsedLocation = null;
@@ -939,12 +956,14 @@ const fetchComplaints = async (userData) => {
       console.log('Sample complaint parsedLocation:', processedComplaints[0].parsedLocation);
     }
 
-    // Set complaints (only those within service area)
-    const validComplaints = processedComplaints.filter(complaint => complaint.withinServiceArea !== false);
-    const excludedCount = processedComplaints.length - validComplaints.length;
+    // Set complaints (include all for demo purposes, but flag those outside service area)
+    const validComplaints = processedComplaints.filter(complaint => 
+      complaint.parsedLocation && complaint.coordinates && complaint.coordinates.length === 2
+    );
+    const outsideServiceAreaCount = processedComplaints.filter(c => c.withinServiceArea === false).length;
     
-    if (excludedCount > 0) {
-      console.log(`Excluded ${excludedCount} complaints outside service area (RWP/ISB)`);
+    if (outsideServiceAreaCount > 0) {
+      console.log(`${outsideServiceAreaCount} complaints outside service area (RWP/ISB) - showing with warning`);
     }
     
     setComplaints(validComplaints);
@@ -1698,11 +1717,19 @@ useEffect(() => {
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-gray-600 w-20">Priority:</span>
                   <span className={`px-2 py-1 rounded text-xs font-medium ${
-                    selectedComplaint.priority === 'high' ? 'bg-red-100 text-red-700' :
-                    selectedComplaint.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                    selectedComplaint.priority === 'high' || selectedComplaint.priority === 5 ? 'bg-red-100 text-red-700' :
+                    selectedComplaint.priority === 'medium' || selectedComplaint.priority === 3 || selectedComplaint.priority === 4 ? 'bg-yellow-100 text-yellow-700' :
                     'bg-green-100 text-green-700'
                   }`}>
-                    {selectedComplaint.priority?.toUpperCase()}
+                    {typeof selectedComplaint.priority === 'string' ? 
+                      selectedComplaint.priority.toUpperCase() : 
+                      selectedComplaint.priority === 5 ? 'HIGH' :
+                      selectedComplaint.priority === 4 ? 'HIGH' :
+                      selectedComplaint.priority === 3 ? 'MEDIUM' :
+                      selectedComplaint.priority === 2 ? 'LOW' :
+                      selectedComplaint.priority === 1 ? 'LOW' :
+                      `LEVEL ${selectedComplaint.priority}`
+                    }
                   </span>
                 </div>
               )}

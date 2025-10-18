@@ -3389,8 +3389,9 @@ const AdminDashboard = () => {
                     </button>
                     <button
                       onClick={() => navigate('/map')}
-                      className="w-full flex items-center px-3 py-2 text-xs rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all duration-200"
+                      className="w-full flex items-center justify-center px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all duration-200 transform hover:scale-105"
                     >
+                      <MapIcon className="h-4 w-4 mr-2" />
                       Full Screen Map
                     </button>
                   </div>

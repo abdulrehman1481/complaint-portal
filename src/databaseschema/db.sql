@@ -31,6 +31,7 @@ create table public.users (
   official_position text,
   address text,
   profile_image text,
+  active boolean default true,
   last_active timestamp with time zone,
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
