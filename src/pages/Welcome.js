@@ -558,9 +558,13 @@ export default function LandingPage() {
               <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-2">
                 Pakistan CivicMapTrack
               </h1>
-              <p className="text-sm uppercase tracking-wide text-green-100 mb-3">By Abdul Rehman</p>
-              <p className="text-lg md:text-xl mb-8 text-green-100 max-w-lg">
-                Report, track, and resolve local issues across Pakistan with our GIS-powered platform. Awaz aap ki, behtari sab ki.
+              <p className="text-sm uppercase tracking-wide text-green-200 mb-1 font-medium">By Abdul Rehman</p>
+              <p className="text-xs text-green-300 mb-4 italic">آپ کی شکایت، ہماری ذمہ داری</p>
+              <p className="text-lg md:text-xl mb-3 text-green-100 max-w-lg leading-relaxed">
+                A GIS-powered civic platform that connects citizens with local authorities — making it effortless to report potholes, sewage leaks, power outages, and more.
+              </p>
+              <p className="text-base mb-8 text-green-200 max-w-lg">
+                آپ کی آواز کو طاقت دیں — نقشے پر مسئلہ رپورٹ کریں، حل تک ٹریک کریں۔
               </p>
               <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
                 <button
@@ -780,16 +784,41 @@ export default function LandingPage() {
 
           <div className="flex flex-col md:flex-row items-center">
             <div className="md:w-1/2 mb-10 md:mb-0 md:pr-8">
-              <h3 className="text-2xl font-semibold text-gray-900 mb-4">Our Mission</h3>
-              <p className="text-gray-600 mb-4">
-                CivicMapTrack was created to bridge the gap between citizens and local authorities, making it easier for community members to report issues and for officials to efficiently address them.
+              <h3 className="text-2xl font-semibold text-gray-900 mb-1">Our Mission</h3>
+              <p className="text-sm text-green-600 font-medium mb-4 italic">ہمارا مقصد — عوام کی خدمت</p>
+              <p className="text-gray-600 mb-4 leading-relaxed">
+                CivicMapTrack was born out of a simple idea: every citizen deserves to be heard. Whether it's a broken street light in your neighbourhood, a flooded road after rain, or an overflowing drain — your complaint matters and deserves a real response.
               </p>
-              <p className="text-gray-600 mb-4">
-                Using Geographic Information Systems (GIS) technology, we visualize data in ways that make sense and help decision-makers allocate resources more effectively.
+              <p className="text-gray-600 mb-4 leading-relaxed">
+                Built by <strong className="text-gray-800">Abdul Rehman</strong>, this platform harnesses the power of Geographic Information Systems (GIS) to put civic issues on the map — literally. Real-time data visualisation helps authorities prioritise and resolve problems faster than ever.
               </p>
-              <p className="text-gray-600">
-                Our platform is designed to be accessible to everyone, regardless of technical expertise, ensuring all voices in the community can be heard.
+              <p className="text-gray-600 mb-5 leading-relaxed">
+                ہم یقین رکھتے ہیں کہ ٹیکنالوجی سے شہریوں اور حکومت کے درمیان فاصلہ کم ہو سکتا ہے۔ یہ پلیٹ فارم اسی سوچ کا نتیجہ ہے۔
               </p>
+              <div className="flex flex-wrap gap-3">
+                <a
+                  href="mailto:abdulrehman10abd@gmail.com"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-green-50 border border-green-200 text-green-700 rounded-full text-sm font-medium hover:bg-green-100 transition-colors"
+                >
+                  <Mail className="h-4 w-4" />
+                  abdulrehman10abd@gmail.com
+                </a>
+                <a
+                  href="https://www.linkedin.com/in/abdul-rehman1481"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-200 text-blue-700 rounded-full text-sm font-medium hover:bg-blue-100 transition-colors"
+                >
+                  <Linkedin className="h-4 w-4" />
+                  LinkedIn Profile
+                </a>
+                <a
+                  href="tel:+923059601481"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-100 transition-colors"
+                >
+                  📞 0305-9601481
+                </a>
+              </div>
             </div>
             <div className="md:w-1/2">
               <img src="/api/placeholder/600/400" alt="Team working on maps" className="rounded-lg shadow-md w-full" />
@@ -823,7 +852,7 @@ export default function LandingPage() {
                 <a href="#" className="text-gray-400 hover:text-white transition-colors">
                   <Github className="h-5 w-5" />
                 </a>
-                <a href="#" className="text-gray-400 hover:text-white transition-colors">
+                <a href="https://www.linkedin.com/in/abdul-rehman1481" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-blue-400 transition-colors">
                   <Linkedin className="h-5 w-5" />
                 </a>
               </div>
@@ -852,19 +881,38 @@ export default function LandingPage() {
             </div>
             
       <div>
-              <h3 className="font-semibold text-lg mb-4">Contact Us</h3>
-              <address className="not-italic text-gray-400">
-        <p className="mb-2">Street 4, G-10/2</p>
-        <p className="mb-2">Islamabad, Pakistan</p>
-        <p className="mb-2">Email: contact@civicmaptrack.pk</p>
-        <p>Phone: +92 300 1234567</p>
+              <h3 className="font-semibold text-lg mb-4">Contact Us — ہم سے رابطہ کریں</h3>
+              <address className="not-italic text-gray-400 space-y-2">
+                <p className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-green-400 flex-shrink-0" />
+                  <a href="mailto:abdulrehman10abd@gmail.com" className="hover:text-white transition-colors">abdulrehman10abd@gmail.com</a>
+                </p>
+                <p className="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+                  <a href="tel:+923059601481" className="hover:text-white transition-colors">0305-9601481</a>
+                </p>
+                <p className="flex items-center gap-2">
+                  <Linkedin className="h-4 w-4 text-blue-400 flex-shrink-0" />
+                  <a href="https://www.linkedin.com/in/abdul-rehman1481" target="_blank" rel="noopener noreferrer" className="hover:text-blue-300 transition-colors">linkedin.com/in/abdul-rehman1481</a>
+                </p>
               </address>
             </div>
           </div>
           
           <div className="border-t border-gray-700 mt-8 pt-8 text-center text-gray-400 text-sm">
-      <p>&copy; {new Date().getFullYear()} CivicMapTrack Pakistan. All rights reserved.</p>
-      <p className="mt-2">Developed by Abdul Rehman</p>
+            <p>&copy; {new Date().getFullYear()} CivicMapTrack Pakistan. All rights reserved.</p>
+            <p className="mt-2">
+              Designed & Developed with ❤️ by{' '}
+              <a
+                href="https://www.linkedin.com/in/abdul-rehman1481"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-green-400 hover:text-green-300 font-medium transition-colors"
+              >
+                Abdul Rehman
+              </a>
+              {' '}— شہریوں کی آواز، بہتری کا راستہ
+            </p>
           </div>
         </div>
       </footer>
