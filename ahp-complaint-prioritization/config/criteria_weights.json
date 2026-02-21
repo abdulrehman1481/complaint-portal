@@ -1,0 +1,102 @@
+{
+  "project_info": {
+    "name": "AHP Complaint Prioritization System",
+    "version": "1.0.0",
+    "authors": ["Saif ullah Yar khan", "Abdul Rehman Nadeem"],
+    "course": "SDSS",
+    "instructor": "Misbah Rani"
+  },
+  
+  "criteria": {
+    "names": [
+      "Public Safety Risk",
+      "Scale of Impact",
+      "Urgency Level",
+      "Resource Requirements",
+      "Department Capacity"
+    ],
+    "descriptions": {
+      "Public Safety Risk": "Potential danger to human life or property",
+      "Scale of Impact": "Number of people affected by the issue",
+      "Urgency Level": "Time sensitivity of resolution required",
+      "Resource Requirements": "Cost and complexity to resolve (inverse)",
+      "Department Capacity": "Current workload and resource availability"
+    }
+  },
+  
+  "pairwise_comparisons": {
+    "default": {
+      "Public Safety Risk vs Scale of Impact": 3,
+      "Public Safety Risk vs Urgency Level": 2,
+      "Public Safety Risk vs Resource Requirements": 5,
+      "Public Safety Risk vs Department Capacity": 4,
+      "Scale of Impact vs Urgency Level": 1,
+      "Scale of Impact vs Resource Requirements": 3,
+      "Scale of Impact vs Department Capacity": 2,
+      "Urgency Level vs Resource Requirements": 4,
+      "Urgency Level vs Department Capacity": 3,
+      "Resource Requirements vs Department Capacity": 1
+    },
+    "safety_focused": {
+      "Public Safety Risk vs Scale of Impact": 5,
+      "Public Safety Risk vs Urgency Level": 4,
+      "Public Safety Risk vs Resource Requirements": 7,
+      "Public Safety Risk vs Department Capacity": 6,
+      "Scale of Impact vs Urgency Level": 2,
+      "Scale of Impact vs Resource Requirements": 4,
+      "Scale of Impact vs Department Capacity": 3,
+      "Urgency Level vs Resource Requirements": 3,
+      "Urgency Level vs Department Capacity": 2,
+      "Resource Requirements vs Department Capacity": 1
+    },
+    "efficiency_focused": {
+      "Public Safety Risk vs Scale of Impact": 2,
+      "Public Safety Risk vs Urgency Level": 2,
+      "Public Safety Risk vs Resource Requirements": 3,
+      "Public Safety Risk vs Department Capacity": 3,
+      "Scale of Impact vs Urgency Level": 1,
+      "Scale of Impact vs Resource Requirements": 2,
+      "Scale of Impact vs Department Capacity": 2,
+      "Urgency Level vs Resource Requirements": 3,
+      "Urgency Level vs Department Capacity": 2,
+      "Resource Requirements vs Department Capacity": 1
+    }
+  },
+  
+  "saaty_scale": {
+    "1": "Equal importance",
+    "2": "Weak or slight preference",
+    "3": "Moderate importance",
+    "4": "Moderate plus",
+    "5": "Strong importance",
+    "6": "Strong plus",
+    "7": "Very strong importance",
+    "8": "Very, very strong",
+    "9": "Extreme importance"
+  },
+  
+  "consistency_threshold": 0.1,
+  
+  "priority_categories": {
+    "critical": {
+      "threshold_percentile": 75,
+      "color": "#d62728",
+      "action": "Immediate attention required"
+    },
+    "high": {
+      "threshold_percentile": 50,
+      "color": "#ff7f0e",
+      "action": "Address within 24-48 hours"
+    },
+    "medium": {
+      "threshold_percentile": 25,
+      "color": "#ffbb78",
+      "action": "Schedule for resolution"
+    },
+    "low": {
+      "threshold_percentile": 0,
+      "color": "#98df8a",
+      "action": "Address as resources permit"
+    }
+  }
+}

@@ -1,0 +1,81 @@
+id,title,type,department,status,priority_score,priority_rank,safety_score,impact_score,urgency_score,resource_score,capacity_score
+C-1077,Wall Collapse Risk F-10,building_collapse,Building Safety,resolved,0.7245467967524319,1.0,0.9,1.0,0.3,0.25,0.8
+C-1067,Gas Pressure Drop E-7 Markaz,gas_leak,Public Works,resolved,0.7106297914585881,2.0,0.9,1.0,0.3,0.295,0.6
+C-1010,Unsafe Building Report Blue Area,building_collapse,Building Safety,in_progress,0.7074109213982153,3.0,0.9,1.0,0.3,0.25,0.6
+C-1028,Pipeline Leak Near Shakarparian Park,gas_leak,Public Works,resolved,0.7074109213982153,3.0,0.9,1.0,0.3,0.25,0.6
+C-1002,Gas Leak Alert 7th Avenue,gas_leak,Public Works,in_progress,0.7052650080246333,4.0,0.9,1.0,0.3,0.22,0.6
+C-1061,Electrical Hazard Serena Chowk,electrical_hazard,Public Works,scheduled,0.699184920132818,5.0,0.9,1.0,0.3,0.13499999999999998,0.6
+C-1009,Unsafe Building Report 9th Avenue,building_collapse,Building Safety,resolved,0.6966813545303057,6.0,0.9,1.0,0.3,0.1,0.6
+C-1004,Wall Collapse Risk F-10 Markaz,building_collapse,Building Safety,pending,0.6966813545303057,6.0,0.9,1.0,0.3,0.1,0.6
+C-1015,Fire Safety Breach PWD,fire_hazard,Fire Department,scheduled,0.6966813545303057,6.0,0.9,1.0,0.3,0.1,0.6
+C-1075,Gas Leak Alert I-11 Industrial,gas_leak,Public Works,scheduled,0.6966813545303057,6.0,0.9,1.0,0.3,0.1,0.6
+C-1040,Electrical Hazard F-10,electrical_hazard,Public Works,scheduled,0.6966813545303057,6.0,0.9,1.0,0.3,0.1,0.6
+C-1058,Wall Collapse Risk G-8 Markaz,building_collapse,Building Safety,in_progress,0.6966813545303057,6.0,0.9,1.0,0.3,0.1,0.6
+C-1049,Live Wire Incident F-8 Markaz,electrical_hazard,Public Works,pending,0.6700554994133309,7.0,0.9,0.8,0.3,0.25,0.6
+C-1027,Gas Leak Alert G-7 Markaz,gas_leak,Public Works,pending,0.6593259325454213,8.0,0.9,0.8,0.3,0.1,0.6
+C-1059,Unsafe Building Report Centaurus Mall,building_collapse,Building Safety,resolved,0.6417785921533955,9.0,0.7200000000000001,1.0,0.3,0.4,0.6
+C-1017,Live Wire Incident G-9 Markaz,electrical_hazard,Public Works,in_progress,0.6360561564905104,10.0,0.7200000000000001,1.0,0.3,0.32,0.6
+C-1036,Fire Safety Breach E-11,fire_hazard,Fire Department,in_progress,0.6203194584175764,11.0,0.7200000000000001,1.0,0.3,0.1,0.6
+C-1016,Transformer Emergency Golra Railway Station,electrical_hazard,Public Works,escalated,0.6074754098105235,12.0,0.7200000000000001,1.0,0.3,0.16,0.4
+C-1068,Combustible Storage I-9 Markaz,fire_hazard,Fire Department,pending,0.6044231701685111,13.0,0.7200000000000001,0.8,0.3,0.4,0.6
+C-1011,Structural Instability E-11,building_collapse,Building Safety,pending,0.6031835830633597,14.0,0.7200000000000001,1.0,0.3,0.1,0.4
+C-1006,Water Quality Alert 9th Avenue,water_contamination,Water Supply,in_progress,0.5865474030299734,15.0,0.6,1.0,0.3,0.1,0.8
+C-1047,Structural Instability F-10 Markaz,building_collapse,Building Safety,pending,0.5829640364326919,16.0,0.7200000000000001,0.8,0.3,0.1,0.6
+C-1038,Pipeline Contamination G-6 Markaz,water_contamination,Water Supply,resolved,0.5694115276757568,17.0,0.6,1.0,0.3,0.1,0.6
+C-1065,Fire Safety Breach F-9 Park,fire_hazard,Fire Department,pending,0.5658281610784752,18.0,0.7200000000000001,0.8,0.3,0.1,0.4
+C-1057,Signal Failure G-9 Markaz,broken_traffic_light,Traffic,pending,0.5613835884631585,19.0,0.6,0.8,0.3,0.51,0.6
+C-1007,Stormwater Backup Aabpara,flooding,Roads,in_progress,0.5612600027660072,20.0,0.5,1.0,0.3,0.1,1.0
+C-1052,Water Quality Alert Blue Area,water_contamination,Water Supply,pending,0.5562098268397736,21.0,0.6,1.0,0.3,0.155,0.4
+C-1030,Pipeline Contamination F-8 Markaz,water_contamination,Water Supply,resolved,0.5522756523215401,22.0,0.6,1.0,0.3,0.1,0.4
+C-1062,Signal Failure F-10 Markaz,broken_traffic_light,Traffic,in_progress,0.546400470790502,23.0,0.48,1.0,0.3,0.49,0.6
+C-1044,Pipeline Contamination E-11,water_contamination,Water Supply,in_progress,0.5463690391560634,24.0,0.48,1.0,0.3,0.25,0.8
+C-1012,Urban Flooding Rawal Lake Road,flooding,Roads,in_progress,0.5441241274117905,25.0,0.5,1.0,0.3,0.1,0.8
+C-1045,Deep Pothole Diplomatic Enclave,pothole,Roads,in_progress,0.5432130323645677,26.0,0.48,1.0,0.3,0.685,0.4
+C-1069,Deep Pothole F-6 Park,pothole,Roads,scheduled,0.5424662962722685,27.0,0.48,1.0,0.3,0.435,0.6
+C-1050,Traffic Control Fault I-10 Markaz,broken_traffic_light,Traffic,in_progress,0.5413933395854775,28.0,0.48,1.0,0.3,0.42,0.6
+C-1026,Dark Corridor Report Shakarparian Park,lighting,Public Works,resolved,0.5407456671752863,29.0,0.5,0.8,0.3,0.575,0.8
+C-1046,Pipeline Contamination F-11 Markaz,water_contamination,Water Supply,resolved,0.5399627306697563,30.0,0.48,1.0,0.3,0.4,0.6
+C-1014,Pipeline Contamination PIMS Hospital,water_contamination,Water Supply,in_progress,0.5399627306697563,30.0,0.48,1.0,0.3,0.4,0.6
+C-1073,Signal Failure F-9 Park,broken_traffic_light,Traffic,in_progress,0.5382059011595433,31.0,0.48,1.0,0.3,0.615,0.4
+C-1041,Pipeline Contamination I-9 Markaz,water_contamination,Water Supply,resolved,0.5292331638018467,32.0,0.48,1.0,0.3,0.25,0.6
+C-1051,Water Quality Alert Centaurus Mall,water_contamination,Water Supply,escalated,0.5292331638018467,32.0,0.48,1.0,0.3,0.25,0.6
+C-1031,Underpass Flood I-11 Industrial,flooding,Roads,in_progress,0.5269882520575738,33.0,0.5,1.0,0.3,0.1,0.6
+C-1033,Boil Water Advisory PIMS Hospital,water_contamination,Water Supply,in_progress,0.5185035969339372,34.0,0.48,1.0,0.3,0.1,0.6
+C-1060,Fire Safety Breach I-10 Markaz,fire_hazard,Fire Department,scheduled,0.5165061811163919,35.0,0.45,1.0,0.3,0.25,0.6
+C-1043,Wall Collapse Risk G-7 Markaz,building_collapse,Building Safety,resolved,0.5165061811163919,35.0,0.45,1.0,0.3,0.25,0.6
+C-1055,Fire Safety Breach Murree Road,fire_hazard,Fire Department,scheduled,0.5165061811163919,35.0,0.45,1.0,0.3,0.25,0.6
+C-1066,Dark Corridor Report Blue Area,lighting,Public Works,in_progress,0.5146077636695375,36.0,0.4,1.0,0.3,0.52,0.6
+C-1034,Deep Pothole F-6 Park,pothole,Roads,scheduled,0.5086335837678084,37.0,0.3,1.0,0.3,0.79,0.8
+C-1076,Pavement Failure G-11 Markaz,pothole,Roads,in_progress,0.5065100515686667,38.0,0.48,0.8,0.3,0.215,0.8
+C-1056,Fire Hazard Inspection 9th Avenue,fire_hazard,Fire Department,escalated,0.4993703057621752,39.0,0.45,1.0,0.3,0.25,0.4
+C-1001,Pavement Failure Margalla Trail 5,pothole,Roads,escalated,0.4843446638349854,40.0,0.3,1.0,0.3,0.69,0.6
+C-1070,Stormwater Backup Blue Area,flooding,Roads,resolved,0.46742910108517416,41.0,0.4,1.0,0.3,0.1,0.4
+C-1074,Sound Level Breach F-7 Markaz,noise_complaint,Environment,pending,0.46376746497538734,42.0,0.3,0.8,0.3,0.685,0.8
+C-1054,Road Surface Damage Daman-e-Koh,pothole,Roads,scheduled,0.4575207466652116,43.0,0.3,1.0,0.3,0.315,0.6
+C-1019,Road Surface Damage Community Center F-6,pothole,Roads,in_progress,0.44825322034746184,44.0,0.3,1.0,0.3,0.425,0.4
+C-1042,After-hours Noise I-10 Markaz,noise_complaint,Environment,scheduled,0.43083423443137947,45.0,0.24,0.8,0.3,0.8200000000000001,0.6
+C-1018,Asset Defacement Saddar,graffiti,Parks,pending,0.4250803671340557,46.0,0.24,0.8,0.3,0.5,0.8
+C-1032,Stormwater Backup G-9 Markaz,flooding,Roads,pending,0.42093006301211633,47.0,0.25,1.0,0.3,0.1,0.6
+C-1008,Stormwater Backup I-9 Markaz,flooding,Roads,in_progress,0.42093006301211633,47.0,0.25,1.0,0.3,0.1,0.6
+C-1071,Fire Safety Breach I-10 Markaz,fire_hazard,Fire Department,scheduled,0.4126929038152074,48.0,0.18000000000000002,1.0,0.3,0.4,0.6
+C-1072,Asset Defacement G-6 Hospital,graffiti,Parks,pending,0.4108057096112816,49.0,0.24,0.8,0.3,0.54,0.6
+C-1024,Dark Corridor Report G-6 Hospital,lighting,Public Works,escalated,0.4086102970523542,50.0,0.25,0.8,0.3,0.44999999999999996,0.6
+C-1013,Waste Overflow Kashmir Highway,littering,Environment,in_progress,0.3912226774592935,51.0,0.15,0.8,0.3,0.8,0.6
+C-1021,Sound Level Breach E-11,noise_complaint,Environment,in_progress,0.3855002417964084,52.0,0.15,0.8,0.3,0.72,0.6
+C-1078,Urban Flooding Faisal Avenue,flooding,Roads,in_progress,0.38357464102723193,53.0,0.25,0.8,0.3,0.1,0.6
+C-1048,Intersection Malfunction Faisal Avenue,broken_traffic_light,Traffic,in_progress,0.37846426313939996,54.0,0.12,0.8,0.3,0.56,0.8
+C-1005,Sound Level Breach Melody Market,noise_complaint,Environment,scheduled,0.3708365004102654,55.0,0.15,0.8,0.3,0.515,0.6
+C-1037,Dark Corridor Report 9th Avenue,lighting,Public Works,scheduled,0.36965338742127174,56.0,0.1,0.8,0.3,0.795,0.6
+C-1029,Unsafe Building Report Saddar,building_collapse,Building Safety,pending,0.3646079149624134,57.0,0.18000000000000002,0.8,0.3,0.25,0.6
+C-1079,Waste Overflow F-7 Park,littering,Environment,pending,0.35906540849000346,58.0,0.15,0.8,0.3,0.59,0.4
+C-1053,Asset Defacement G-7 Markaz,graffiti,Parks,resolved,0.3562605994633017,59.0,0.06,0.8,0.3,0.845,0.6
+C-1063,Waste Overflow Golra Railway Station,littering,Environment,in_progress,0.3559029472343713,60.0,0.06,0.8,0.3,0.8400000000000001,0.6
+C-1023,After-hours Noise F-10,noise_complaint,Environment,in_progress,0.3551876427765107,61.0,0.06,0.8,0.3,0.8300000000000001,0.6
+C-1080,Sanitation Backlog F-8 Markaz,littering,Environment,pending,0.35411468608971974,62.0,0.06,0.8,0.3,0.815,0.6
+C-1025,Asset Defacement Rawal Lake Road,graffiti,Parks,pending,0.34707186312473304,63.0,0.15,0.6,0.3,0.7050000000000001,0.6
+C-1064,Sanitation Backlog H-9 Markaz,littering,Environment,pending,0.3398400285669457,64.0,0.06,0.8,0.3,0.855,0.4
+C-1003,Sanitation Backlog Jinnah Avenue,littering,Environment,escalated,0.331256375072618,65.0,0.06,0.8,0.3,0.735,0.4
+C-1022,Sanitation Backlog G-7 Markaz,littering,Environment,pending,0.28757343458060747,66.0,0.15,0.4,0.3,0.635,0.4
+C-1039,Graffiti Removal Needed E-11,graffiti,Parks,pending,0.28652545506411864,67.0,0.06,0.4,0.3,0.675,0.8
+C-1020,Asset Defacement Kashmir Highway,graffiti,Parks,in_progress,0.28190740772246314,68.0,0.06,0.4,0.3,0.8500000000000001,0.6
+C-1035,Asset Defacement Saddar,graffiti,Parks,pending,0.2797614943488812,69.0,0.06,0.4,0.3,0.8200000000000001,0.6

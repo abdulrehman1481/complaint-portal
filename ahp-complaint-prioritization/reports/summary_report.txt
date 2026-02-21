@@ -1,0 +1,37 @@
+============================================================
+COMPLAINT PRIORITIZATION SUMMARY REPORT
+============================================================
+
+CRITERIA WEIGHTS:
+------------------------------------------------------------
+  Public Safety Risk...................... 0.4242 (42.4%)
+  Scale of Impact......................... 0.1868 (18.7%)
+  Urgency Level........................... 0.2318 (23.2%)
+  Resource Requirements................... 0.0715 (7.2%)
+  Department Capacity..................... 0.0857 (8.6%)
+
+Consistency Ratio: 0.0144
+Consistency Status: [OK] ACCEPTABLE
+
+PRIORITIZATION STATISTICS:
+------------------------------------------------------------
+  Total Complaints: 80
+  Critical Priority: 20
+  High Priority: 20
+  Medium Priority: 20
+  Low Priority: 20
+
+TOP 5 PRIORITY COMPLAINTS:
+------------------------------------------------------------
+  #1 [C-1077] Wall Collapse Risk F-10
+      Priority Score: 0.7245
+  #2 [C-1067] Gas Pressure Drop E-7 Markaz
+      Priority Score: 0.7106
+  #3 [C-1010] Unsafe Building Report Blue Area
+      Priority Score: 0.7074
+  #3 [C-1028] Pipeline Leak Near Shakarparian Park
+      Priority Score: 0.7074
+  #4 [C-1002] Gas Leak Alert 7th Avenue
+      Priority Score: 0.7053
+
+============================================================
