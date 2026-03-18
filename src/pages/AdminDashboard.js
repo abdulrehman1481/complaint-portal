@@ -45,6 +45,9 @@ L.Icon.Default.mergeOptions({
 const AdminDashboard = () => {
   const APK_OBJECT_KEY = process.env.REACT_APP_R2_APK_OBJECT_KEY || 'latest/civic-services-latest.apk';
   const R2_PUBLIC_BASE_URL = process.env.REACT_APP_R2_PUBLIC_BASE_URL?.trim();
+  const DOWNLOAD_PAGE_PATH = '/download-apk';
+  const DOWNLOAD_ENDPOINT_PATH = '/.netlify/functions/apk-download';
+  const DOWNLOAD_PAGE_URL = `${window.location.origin}${DOWNLOAD_PAGE_PATH}`;
   const APK_PUBLIC_URL = R2_PUBLIC_BASE_URL
     ? `${R2_PUBLIC_BASE_URL.replace(/\/$/, '')}/${APK_OBJECT_KEY}`
     : (process.env.REACT_APP_ANDROID_APK_URL?.trim() || '');
@@ -744,7 +747,7 @@ const AdminDashboard = () => {
         throw new Error(errorPayload?.error || 'Failed to create upload URL.');
       }
 
-      const { uploadUrl, publicUrl } = await createUrlResponse.json();
+      const { uploadUrl } = await createUrlResponse.json();
       if (!uploadUrl) {
         throw new Error('Upload URL was not returned by server.');
       }
@@ -765,7 +768,7 @@ const AdminDashboard = () => {
 
       const uploadedAt = new Date().toISOString();
       setApkLastUploadedAt(uploadedAt);
-      setApkUploadMessage(`APK uploaded successfully. Public download link is live: ${publicUrl || APK_PUBLIC_URL}`);
+      setApkUploadMessage(`APK uploaded successfully. Share this installer page: ${DOWNLOAD_PAGE_URL}`);
       setApkFile(null);
     } catch (error) {
       console.error('Failed to upload APK:', error);
@@ -776,14 +779,9 @@ const AdminDashboard = () => {
   };
 
   const copyApkLink = async () => {
-    if (!APK_PUBLIC_URL) {
-      setApkUploadMessage('R2 public URL is missing. Set REACT_APP_R2_PUBLIC_BASE_URL.');
-      return;
-    }
-
     try {
-      await navigator.clipboard.writeText(APK_PUBLIC_URL);
-      setApkUploadMessage('APK link copied to clipboard.');
+      await navigator.clipboard.writeText(DOWNLOAD_PAGE_URL);
+      setApkUploadMessage('Installer page link copied to clipboard.');
     } catch (error) {
       console.error('Clipboard copy failed:', error);
       setApkUploadMessage('Could not copy link. Please copy it manually from the field.');
@@ -4358,8 +4356,12 @@ const AdminDashboard = () => {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
-                      <p className="text-xs uppercase tracking-wide text-gray-500">Public Download URL</p>
-                      <p className="mt-2 text-sm text-gray-900 break-all">{APK_PUBLIC_URL || 'Set REACT_APP_R2_PUBLIC_BASE_URL first'}</p>
+                      <p className="text-xs uppercase tracking-wide text-gray-500">Installer Page URL</p>
+                      <p className="mt-2 text-sm text-gray-900 break-all">{DOWNLOAD_PAGE_URL}</p>
+                      <p className="mt-2 text-xs text-gray-500 break-all">Direct endpoint: {DOWNLOAD_ENDPOINT_PATH}</p>
+                      {APK_PUBLIC_URL && (
+                        <p className="mt-2 text-xs text-gray-500 break-all">R2 public URL (optional): {APK_PUBLIC_URL}</p>
+                      )}
                       <button
                         onClick={copyApkLink}
                         className="mt-3 inline-flex items-center px-3 py-1.5 rounded border border-gray-300 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50"

@@ -3,18 +3,14 @@ import { Link } from 'react-router-dom';
 import { Download, Smartphone, ShieldCheck, ArrowLeft } from 'lucide-react';
 
 const FALLBACK_APK_FILE = '/downloads/civic-services-v1.0.0-debug.apk';
+const NETLIFY_APK_DOWNLOAD = '/.netlify/functions/apk-download';
 const R2_PUBLIC_BASE_URL = process.env.REACT_APP_R2_PUBLIC_BASE_URL?.trim();
 const R2_APK_OBJECT_KEY = process.env.REACT_APP_R2_APK_OBJECT_KEY || 'latest/civic-services-latest.apk';
 const R2_APK_FILE = R2_PUBLIC_BASE_URL
   ? `${R2_PUBLIC_BASE_URL.replace(/\/$/, '')}/${R2_APK_OBJECT_KEY}`
   : '';
 const EXTERNAL_APK_URL = process.env.REACT_APP_ANDROID_APK_URL?.trim();
-const APK_FILE = EXTERNAL_APK_URL || R2_APK_FILE || FALLBACK_APK_FILE;
-const APK_FILE_LABEL = EXTERNAL_APK_URL
-  ? 'Manual external APK URL from environment'
-  : R2_APK_FILE
-    ? 'Cloudflare R2 latest APK (managed in Super Admin dashboard)'
-    : 'Bundled static APK file';
+const APK_FILE = NETLIFY_APK_DOWNLOAD || EXTERNAL_APK_URL || R2_APK_FILE || FALLBACK_APK_FILE;
 
 export default function DownloadApk() {
   return (
@@ -41,12 +37,13 @@ export default function DownloadApk() {
             </p>
             <a
               href={APK_FILE}
+              download
               className="mt-8 inline-flex items-center gap-3 rounded-xl bg-white px-6 py-3 font-semibold text-emerald-900 hover:bg-emerald-50"
             >
               <Download className="h-5 w-5" />
               Download APK
             </a>
-            <p className="mt-3 text-xs text-emerald-100">Source: {APK_FILE_LABEL}</p>
+            <p className="mt-3 text-xs text-emerald-100">Source: Secure Netlify download endpoint</p>
           </section>
 
           <section className="rounded-3xl border border-slate-800 bg-slate-900/60 p-8">
