@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Menu, Map, AlertTriangle, User, Mail, Lock, Eye, EyeOff, ChevronRight, MapPin, BarChart2, Filter, Calendar, Clock, Image, Route, Facebook, Twitter, Instagram, Github, Linkedin } from 'lucide-react';
+import { X, Menu, Map, AlertTriangle, User, Mail, Lock, Eye, EyeOff, ChevronRight, MapPin, BarChart2, Filter, Calendar, Clock, Image, Route, Facebook, Twitter, Instagram, Github, Linkedin, Download } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { redirectToDashboard } from '../utils/roleBasedRouting';
 import L from 'leaflet';
@@ -204,9 +204,9 @@ export default function LandingPage() {
   <nav className="bg-green-700 text-white shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Map className="h-8 w-8 mr-2" />
-              <span className="font-bold text-xl">CivicMapTrack</span>
+            <div className="flex items-center gap-2">
+              <img src="/logov1.png" alt="Civic Services logo" className="h-9 w-9 rounded-md bg-white p-1" />
+              <span className="font-bold text-xl tracking-tight">CivicMapTrack</span>
             </div>
             
             {/* Desktop Navigation */}
@@ -214,6 +214,13 @@ export default function LandingPage() {
               <a href="#features" className="px-3 py-2 rounded-md hover:bg-green-600 transition-colors">Features</a>
               <a href="#how-it-works" className="px-3 py-2 rounded-md hover:bg-green-600 transition-colors">How It Works</a>
               <a href="#about" className="px-3 py-2 rounded-md hover:bg-green-600 transition-colors">About</a>
+              <button
+                onClick={() => navigate('/download-apk')}
+                className="inline-flex items-center gap-2 rounded-md border border-green-200 px-3 py-2 text-sm font-medium text-white hover:bg-green-600 transition-colors"
+              >
+                <Download className="h-4 w-4" />
+                APK
+              </button>
               <button 
                 onClick={toggleLogin}
                 className="px-4 py-2 rounded-md bg-white text-green-700 font-medium hover:bg-gray-100 transition-colors"
@@ -247,6 +254,12 @@ export default function LandingPage() {
               <a href="#features" className="block px-3 py-2 rounded-md hover:bg-green-600 transition-colors">Features</a>
               <a href="#how-it-works" className="block px-3 py-2 rounded-md hover:bg-green-600 transition-colors">How It Works</a>
               <a href="#about" className="block px-3 py-2 rounded-md hover:bg-green-600 transition-colors">About</a>
+              <button
+                onClick={() => navigate('/download-apk')}
+                className="w-full text-left px-3 py-2 rounded-md border border-green-300 text-white font-medium hover:bg-green-600 transition-colors mt-2"
+              >
+                Download APK
+              </button>
               <button 
                 onClick={toggleLogin}
                 className="w-full text-left px-3 py-2 rounded-md bg-white text-green-700 font-medium hover:bg-gray-100 transition-colors mt-2"
@@ -551,7 +564,9 @@ export default function LandingPage() {
       )}
 
       {/* Hero Section */}
-      <div className="bg-green-700 text-white pt-16 pb-24 md:py-20">
+      <div className="relative overflow-hidden bg-gradient-to-br from-emerald-700 via-emerald-800 to-slate-900 text-white pt-16 pb-24 md:py-20">
+        <div className="pointer-events-none absolute -top-12 -left-10 h-56 w-56 rounded-full bg-lime-300/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-16 right-0 h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col md:flex-row items-center">
             <div className="md:w-1/2 mb-10 md:mb-0">
@@ -572,6 +587,13 @@ export default function LandingPage() {
                   className="px-6 py-3 bg-white text-green-700 font-medium rounded-md shadow-lg hover:bg-gray-100 transition-colors"
                 >
                   Get Started
+                </button>
+                <button
+                  onClick={() => navigate('/download-apk')}
+                  className="px-6 py-3 bg-emerald-500 text-white font-medium rounded-md shadow-lg hover:bg-emerald-400 transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Download APK
                 </button>
                 <a 
                   href="#how-it-works"

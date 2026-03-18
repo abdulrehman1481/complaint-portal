@@ -186,6 +186,30 @@ frontend-web/
 2. Upload `build` folder contents to your web server
 3. Configure environment variables on your hosting platform
 
+## 📱 APK Distribution (Without Committing APK to GitHub)
+
+Use the `/download-apk` page for testers, but host the APK outside GitHub to avoid binary size limits.
+
+1. Create a Supabase Storage bucket for APK files (recommended bucket name: `apk-distribution`) and mark it public.
+2. Configure upload permission policy for authenticated superadmin users in Supabase Storage policies.
+3. Open Super Admin dashboard -> Settings -> APK Distribution Manager and upload local `.apk`.
+4. Share `/download-apk`; it resolves to the latest uploaded APK.
+
+Optional override:
+If you want to force a custom URL instead of Storage auto-link, set:
+
+   ```env
+   REACT_APP_ANDROID_APK_URL=https://your-hosted-file-url/civic-services-latest.apk
+   ```
+
+Optional bucket name override:
+
+```env
+REACT_APP_APK_STORAGE_BUCKET=apk-distribution
+```
+
+If `REACT_APP_ANDROID_APK_URL` is missing, the page falls back to `/public/downloads/civic-services-v1.0.0-debug.apk`.
+
 ## 🔐 Security Features
 
 - **Row Level Security (RLS)**: Database-level access control

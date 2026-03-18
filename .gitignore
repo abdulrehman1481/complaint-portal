@@ -25,3 +25,6 @@ yarn-error.log*
 
 # Local Netlify folder
 .netlify
+
+# Android binaries should not be committed (GitHub size limits)
+public/downloads/*.apk

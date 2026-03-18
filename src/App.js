@@ -17,6 +17,7 @@ import ComplaintDetail from './pages/ComplaintDetail';
 import MapScreen from './pages/MapScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import Settings from './pages/Settings';
+import DownloadApk from './pages/DownloadApk';
 
 function App() {
   const [isInitializing, setIsInitializing] = useState(true);
@@ -47,6 +48,7 @@ function App() {
           {/* Public routes */}
           <Route path="/" element={<Welcome />} />
           <Route path="/admin-invitation" element={<AdminCreationPage />} />
+          <Route path="/download-apk" element={<DownloadApk />} />
           
           {/* User routes */}
           <Route path="/dashboard" element={

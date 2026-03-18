@@ -43,6 +43,12 @@ L.Icon.Default.mergeOptions({
 });
 
 const AdminDashboard = () => {
+  const APK_STORAGE_BUCKET = process.env.REACT_APP_APK_STORAGE_BUCKET || 'apk-distribution';
+  const APK_STORAGE_PATH = 'latest/civic-services-latest.apk';
+  const APK_PUBLIC_URL = process.env.REACT_APP_SUPABASE_URL
+    ? `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/public/${APK_STORAGE_BUCKET}/${APK_STORAGE_PATH}`
+    : '';
+
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
@@ -130,6 +136,10 @@ const AdminDashboard = () => {
     role: '',
     department: ''
   });
+  const [apkFile, setApkFile] = useState(null);
+  const [apkUploading, setApkUploading] = useState(false);
+  const [apkUploadMessage, setApkUploadMessage] = useState('');
+  const [apkLastUploadedAt, setApkLastUploadedAt] = useState('');
 
   const navigate = useNavigate();
 
@@ -658,6 +668,98 @@ const AdminDashboard = () => {
     } else if (tab === 'analytics') {
       // Fetch comprehensive analytics data
       fetchAnalyticsData();
+    } else if (tab === 'settings') {
+      fetchApkMetadata();
+    }
+  };
+
+  const fetchApkMetadata = async () => {
+    try {
+      const { data, error } = await supabase.storage
+        .from(APK_STORAGE_BUCKET)
+        .list('latest', {
+          search: 'civic-services-latest.apk',
+        });
+
+      if (error) {
+        console.warn('Unable to fetch APK metadata:', error.message);
+        return;
+      }
+
+      const latestFile = data?.find((item) => item.name === 'civic-services-latest.apk');
+      if (latestFile?.updated_at) {
+        setApkLastUploadedAt(latestFile.updated_at);
+      }
+    } catch (error) {
+      console.warn('Error while fetching APK metadata:', error);
+    }
+  };
+
+  const handleApkFileSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setApkFile(null);
+      return;
+    }
+
+    const isApkByName = file.name.toLowerCase().endsWith('.apk');
+    const isApkByType = file.type === 'application/vnd.android.package-archive';
+    if (!isApkByName && file.type && !isApkByType) {
+      setApkUploadMessage('Please choose a valid .apk file.');
+      setApkFile(null);
+      return;
+    }
+
+    setApkUploadMessage('');
+    setApkFile(file);
+  };
+
+  const handleApkUpload = async () => {
+    if (!apkFile) {
+      setApkUploadMessage('Please select an APK file first.');
+      return;
+    }
+
+    try {
+      setApkUploading(true);
+      setApkUploadMessage('Uploading APK...');
+
+      const { error } = await supabase.storage
+        .from(APK_STORAGE_BUCKET)
+        .upload(APK_STORAGE_PATH, apkFile, {
+          upsert: true,
+          cacheControl: '60',
+          contentType: 'application/vnd.android.package-archive',
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      const uploadedAt = new Date().toISOString();
+      setApkLastUploadedAt(uploadedAt);
+      setApkUploadMessage('APK uploaded successfully. Public download link is live.');
+      setApkFile(null);
+    } catch (error) {
+      console.error('Failed to upload APK:', error);
+      setApkUploadMessage(error?.message || 'Failed to upload APK.');
+    } finally {
+      setApkUploading(false);
+    }
+  };
+
+  const copyApkLink = async () => {
+    if (!APK_PUBLIC_URL) {
+      setApkUploadMessage('Supabase URL is missing. Set REACT_APP_SUPABASE_URL.');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(APK_PUBLIC_URL);
+      setApkUploadMessage('APK link copied to clipboard.');
+    } catch (error) {
+      console.error('Clipboard copy failed:', error);
+      setApkUploadMessage('Could not copy link. Please copy it manually from the field.');
     }
   };
   
@@ -4180,14 +4282,88 @@ const AdminDashboard = () => {
 
           {/* Settings Tab */}
           {activeTab === 'settings' && (
-            <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-              <div className="px-4 py-5 sm:px-6">
-                <h3 className="text-lg leading-6 font-medium text-gray-900">System Settings</h3>
-                <p className="mt-1 max-w-2xl text-sm text-gray-500">
-                  Configure the application settings.
-                </p>
+            <div className="space-y-6">
+              <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+                <div className="px-4 py-5 sm:px-6 border-b border-gray-100">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900">APK Distribution Manager</h3>
+                  <p className="mt-1 max-w-2xl text-sm text-gray-500">
+                    Upload the latest Android APK once, then everyone can download it from the homepage APK button.
+                  </p>
+                </div>
+
+                <div className="px-4 py-5 sm:px-6 space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Select APK from local machine</label>
+                    <input
+                      type="file"
+                      accept=".apk,application/vnd.android.package-archive"
+                      onChange={handleApkFileSelect}
+                      className="block w-full text-sm text-gray-700 file:mr-4 file:rounded-md file:border-0 file:bg-indigo-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100"
+                    />
+                    {apkFile && (
+                      <p className="mt-2 text-xs text-gray-500">
+                        Selected: {apkFile.name} ({(apkFile.size / (1024 * 1024)).toFixed(2)} MB)
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={handleApkUpload}
+                      disabled={apkUploading || !apkFile}
+                      className="inline-flex items-center px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {apkUploading ? 'Uploading...' : 'Upload APK'}
+                    </button>
+                    <button
+                      onClick={fetchApkMetadata}
+                      className="inline-flex items-center px-4 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                    >
+                      Refresh Status
+                    </button>
+                  </div>
+
+                  {apkUploadMessage && (
+                    <div className="rounded-md bg-indigo-50 border border-indigo-100 px-3 py-2 text-sm text-indigo-700">
+                      {apkUploadMessage}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">Public Download URL</p>
+                      <p className="mt-2 text-sm text-gray-900 break-all">{APK_PUBLIC_URL || 'Set REACT_APP_SUPABASE_URL first'}</p>
+                      <button
+                        onClick={copyApkLink}
+                        className="mt-3 inline-flex items-center px-3 py-1.5 rounded border border-gray-300 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Copy Link
+                      </button>
+                    </div>
+
+                    <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">Last Uploaded</p>
+                      <p className="mt-2 text-sm text-gray-900">
+                        {apkLastUploadedAt
+                          ? new Date(apkLastUploadedAt).toLocaleString()
+                          : 'No upload found yet'}
+                      </p>
+                      <p className="mt-3 text-xs text-gray-500">
+                        Bucket: {APK_STORAGE_BUCKET} | Path: {APK_STORAGE_PATH}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
-              {/* Settings content would go here */}
+
+              <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+                <div className="px-4 py-5 sm:px-6">
+                  <h3 className="text-lg leading-6 font-medium text-gray-900">Storage Policy Notes</h3>
+                  <p className="mt-1 max-w-3xl text-sm text-gray-500">
+                    Make sure the bucket is public for downloads and upload policy allows authenticated superadmin users.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </main>
