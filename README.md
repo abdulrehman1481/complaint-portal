@@ -190,8 +190,22 @@ frontend-web/
 
 Use the `/download-apk` page for testers, but host the APK outside GitHub to avoid binary size limits.
 
-1. Create a Supabase Storage bucket for APK files (recommended bucket name: `apk-distribution`) and mark it public.
-2. Configure upload permission policy for authenticated superadmin users in Supabase Storage policies.
+1. Create a Cloudflare R2 bucket for APK files and enable public access via custom domain or `r2.dev` URL.
+2. Add Netlify environment variables:
+
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+   R2_ACCOUNT_ID=your_cloudflare_account_id
+   R2_ACCESS_KEY_ID=your_r2_access_key
+   R2_SECRET_ACCESS_KEY=your_r2_secret_key
+   R2_BUCKET=your_r2_bucket_name
+   R2_PUBLIC_BASE_URL=https://your-public-r2-domain
+   R2_APK_OBJECT_KEY=latest/civic-services-latest.apk
+   REACT_APP_R2_PUBLIC_BASE_URL=https://your-public-r2-domain
+   REACT_APP_R2_APK_OBJECT_KEY=latest/civic-services-latest.apk
+   ```
+
 3. Open Super Admin dashboard -> Settings -> APK Distribution Manager and upload local `.apk`.
 4. Share `/download-apk`; it resolves to the latest uploaded APK.
 
@@ -201,12 +215,6 @@ If you want to force a custom URL instead of Storage auto-link, set:
    ```env
    REACT_APP_ANDROID_APK_URL=https://your-hosted-file-url/civic-services-latest.apk
    ```
-
-Optional bucket name override:
-
-```env
-REACT_APP_APK_STORAGE_BUCKET=apk-distribution
-```
 
 If `REACT_APP_ANDROID_APK_URL` is missing, the page falls back to `/public/downloads/civic-services-v1.0.0-debug.apk`.
 

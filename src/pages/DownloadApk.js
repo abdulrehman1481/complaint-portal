@@ -3,18 +3,17 @@ import { Link } from 'react-router-dom';
 import { Download, Smartphone, ShieldCheck, ArrowLeft } from 'lucide-react';
 
 const FALLBACK_APK_FILE = '/downloads/civic-services-v1.0.0-debug.apk';
-const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL?.trim();
-const APK_STORAGE_BUCKET = process.env.REACT_APP_APK_STORAGE_BUCKET || 'apk-distribution';
-const APK_STORAGE_PATH = 'latest/civic-services-latest.apk';
-const SUPABASE_APK_FILE = SUPABASE_URL
-  ? `${SUPABASE_URL}/storage/v1/object/public/${APK_STORAGE_BUCKET}/${APK_STORAGE_PATH}`
+const R2_PUBLIC_BASE_URL = process.env.REACT_APP_R2_PUBLIC_BASE_URL?.trim();
+const R2_APK_OBJECT_KEY = process.env.REACT_APP_R2_APK_OBJECT_KEY || 'latest/civic-services-latest.apk';
+const R2_APK_FILE = R2_PUBLIC_BASE_URL
+  ? `${R2_PUBLIC_BASE_URL.replace(/\/$/, '')}/${R2_APK_OBJECT_KEY}`
   : '';
 const EXTERNAL_APK_URL = process.env.REACT_APP_ANDROID_APK_URL?.trim();
-const APK_FILE = EXTERNAL_APK_URL || SUPABASE_APK_FILE || FALLBACK_APK_FILE;
+const APK_FILE = EXTERNAL_APK_URL || R2_APK_FILE || FALLBACK_APK_FILE;
 const APK_FILE_LABEL = EXTERNAL_APK_URL
   ? 'Manual external APK URL from environment'
-  : SUPABASE_APK_FILE
-    ? 'Supabase Storage latest APK (managed in Super Admin dashboard)'
+  : R2_APK_FILE
+    ? 'Cloudflare R2 latest APK (managed in Super Admin dashboard)'
     : 'Bundled static APK file';
 
 export default function DownloadApk() {
@@ -63,7 +62,7 @@ export default function DownloadApk() {
               </li>
             </ul>
             <div className="mt-6 rounded-xl border border-slate-700 bg-slate-950 p-4 text-xs text-slate-400">
-              Tip: `REACT_APP_ANDROID_APK_URL` overrides the automatic Supabase APK URL when needed.
+              Tip: `REACT_APP_ANDROID_APK_URL` overrides the automatic Cloudflare R2 APK URL when needed.
               <br />
               Share
               <span className="ml-1 font-semibold text-slate-200">/download-apk</span>

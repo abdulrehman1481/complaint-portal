@@ -43,11 +43,11 @@ L.Icon.Default.mergeOptions({
 });
 
 const AdminDashboard = () => {
-  const APK_STORAGE_BUCKET = process.env.REACT_APP_APK_STORAGE_BUCKET || 'apk-distribution';
-  const APK_STORAGE_PATH = 'latest/civic-services-latest.apk';
-  const APK_PUBLIC_URL = process.env.REACT_APP_SUPABASE_URL
-    ? `${process.env.REACT_APP_SUPABASE_URL}/storage/v1/object/public/${APK_STORAGE_BUCKET}/${APK_STORAGE_PATH}`
-    : '';
+  const APK_OBJECT_KEY = process.env.REACT_APP_R2_APK_OBJECT_KEY || 'latest/civic-services-latest.apk';
+  const R2_PUBLIC_BASE_URL = process.env.REACT_APP_R2_PUBLIC_BASE_URL?.trim();
+  const APK_PUBLIC_URL = R2_PUBLIC_BASE_URL
+    ? `${R2_PUBLIC_BASE_URL.replace(/\/$/, '')}/${APK_OBJECT_KEY}`
+    : (process.env.REACT_APP_ANDROID_APK_URL?.trim() || '');
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -675,20 +675,18 @@ const AdminDashboard = () => {
 
   const fetchApkMetadata = async () => {
     try {
-      const { data, error } = await supabase.storage
-        .from(APK_STORAGE_BUCKET)
-        .list('latest', {
-          search: 'civic-services-latest.apk',
-        });
+      const response = await fetch('/.netlify/functions/apk-status', {
+        method: 'GET',
+      });
 
-      if (error) {
-        console.warn('Unable to fetch APK metadata:', error.message);
+      if (!response.ok) {
+        console.warn('Unable to fetch APK metadata:', response.status);
         return;
       }
 
-      const latestFile = data?.find((item) => item.name === 'civic-services-latest.apk');
-      if (latestFile?.updated_at) {
-        setApkLastUploadedAt(latestFile.updated_at);
+      const payload = await response.json();
+      if (payload?.lastModified) {
+        setApkLastUploadedAt(payload.lastModified);
       }
     } catch (error) {
       console.warn('Error while fetching APK metadata:', error);
@@ -722,23 +720,52 @@ const AdminDashboard = () => {
 
     try {
       setApkUploading(true);
-      setApkUploadMessage('Uploading APK...');
+      setApkUploadMessage('Preparing secure upload URL...');
 
-      const { error } = await supabase.storage
-        .from(APK_STORAGE_BUCKET)
-        .upload(APK_STORAGE_PATH, apkFile, {
-          upsert: true,
-          cacheControl: '60',
-          contentType: 'application/vnd.android.package-archive',
-        });
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        throw new Error('You must be logged in to upload APK files.');
+      }
 
-      if (error) {
-        throw error;
+      const createUrlResponse = await fetch('/.netlify/functions/apk-create-upload-url', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileName: apkFile.name,
+        }),
+      });
+
+      if (!createUrlResponse.ok) {
+        const errorPayload = await createUrlResponse.json().catch(() => ({}));
+        throw new Error(errorPayload?.error || 'Failed to create upload URL.');
+      }
+
+      const { uploadUrl, publicUrl } = await createUrlResponse.json();
+      if (!uploadUrl) {
+        throw new Error('Upload URL was not returned by server.');
+      }
+
+      setApkUploadMessage('Uploading APK to Cloudflare R2...');
+
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/vnd.android.package-archive',
+        },
+        body: apkFile,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Upload failed with status ${uploadResponse.status}.`);
       }
 
       const uploadedAt = new Date().toISOString();
       setApkLastUploadedAt(uploadedAt);
-      setApkUploadMessage('APK uploaded successfully. Public download link is live.');
+      setApkUploadMessage(`APK uploaded successfully. Public download link is live: ${publicUrl || APK_PUBLIC_URL}`);
       setApkFile(null);
     } catch (error) {
       console.error('Failed to upload APK:', error);
@@ -750,7 +777,7 @@ const AdminDashboard = () => {
 
   const copyApkLink = async () => {
     if (!APK_PUBLIC_URL) {
-      setApkUploadMessage('Supabase URL is missing. Set REACT_APP_SUPABASE_URL.');
+      setApkUploadMessage('R2 public URL is missing. Set REACT_APP_R2_PUBLIC_BASE_URL.');
       return;
     }
 
@@ -4332,7 +4359,7 @@ const AdminDashboard = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
                       <p className="text-xs uppercase tracking-wide text-gray-500">Public Download URL</p>
-                      <p className="mt-2 text-sm text-gray-900 break-all">{APK_PUBLIC_URL || 'Set REACT_APP_SUPABASE_URL first'}</p>
+                      <p className="mt-2 text-sm text-gray-900 break-all">{APK_PUBLIC_URL || 'Set REACT_APP_R2_PUBLIC_BASE_URL first'}</p>
                       <button
                         onClick={copyApkLink}
                         className="mt-3 inline-flex items-center px-3 py-1.5 rounded border border-gray-300 bg-white text-xs font-medium text-gray-700 hover:bg-gray-50"
@@ -4349,7 +4376,7 @@ const AdminDashboard = () => {
                           : 'No upload found yet'}
                       </p>
                       <p className="mt-3 text-xs text-gray-500">
-                        Bucket: {APK_STORAGE_BUCKET} | Path: {APK_STORAGE_PATH}
+                        R2 Object Path: {APK_OBJECT_KEY}
                       </p>
                     </div>
                   </div>
@@ -4360,7 +4387,7 @@ const AdminDashboard = () => {
                 <div className="px-4 py-5 sm:px-6">
                   <h3 className="text-lg leading-6 font-medium text-gray-900">Storage Policy Notes</h3>
                   <p className="mt-1 max-w-3xl text-sm text-gray-500">
-                    Make sure the bucket is public for downloads and upload policy allows authenticated superadmin users.
+                    This uploader uses Netlify Functions with Cloudflare R2 presigned URLs. Set Netlify env vars for R2 and Supabase role checks.
                   </p>
                 </div>
               </div>
