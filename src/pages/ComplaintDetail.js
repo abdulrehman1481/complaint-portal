@@ -46,6 +46,8 @@ const ComplaintDetail = () => {
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [fieldAgents, setFieldAgents] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [isMapReady, setIsMapReady] = useState(false);
+  const [mapLoadFailed, setMapLoadFailed] = useState(false);
 
   const mapContainer = useRef(null);
   const map = useRef(null);
@@ -328,17 +330,17 @@ const ComplaintDetail = () => {
   }, [complaint?.department_id, user?.roles?.name]);
 
   useEffect(() => {
-    if (complaint && mapContainer.current && !map.current) {
+    if (!loading && complaint && mapContainer.current) {
       // Add delay for proper DOM initialization
       const timer = setTimeout(() => {
-        if (mapContainer.current && !map.current && complaint) {
+        if (!loading && mapContainer.current && complaint) {
           initializeMap();
         }
       }, 300);
       
       return () => clearTimeout(timer);
     }
-  }, [complaint]);
+  }, [complaint, loading]);
 
   useEffect(() => {
     return () => {
@@ -350,6 +352,8 @@ const ComplaintDetail = () => {
         }
         map.current = null;
       }
+      setIsMapReady(false);
+      setMapLoadFailed(false);
     };
   }, []);
 
@@ -410,6 +414,9 @@ const ComplaintDetail = () => {
 
   const initializeMap = () => {
     if (!complaint || !mapContainer.current) return;
+
+    setIsMapReady(false);
+    setMapLoadFailed(false);
     
     // Clean up existing map
     if (map.current) {
@@ -520,11 +527,15 @@ const ComplaintDetail = () => {
             </div>
           `;
         }
+        setMapLoadFailed(true);
+        setIsMapReady(false);
         return;
       }
       
       if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
         console.warn('Coordinates out of valid range:', { lat, lng });
+        setMapLoadFailed(true);
+        setIsMapReady(false);
         return;
       }
       
@@ -543,6 +554,8 @@ const ComplaintDetail = () => {
       map.current.whenReady(() => {
         // Ensure map tiles and overlays recalculate after route transitions.
         map.current?.invalidateSize();
+        setIsMapReady(true);
+        setMapLoadFailed(false);
       });
       
       // Add multiple tile layer options for better coverage
@@ -656,6 +669,8 @@ const ComplaintDetail = () => {
       
     } catch (error) {
       console.error('Error initializing map:', error);
+      setMapLoadFailed(true);
+      setIsMapReady(false);
       
       // Show error message in map container
       if (mapContainer.current) {
@@ -1659,7 +1674,31 @@ const ComplaintDetail = () => {
                             alt={`Evidence ${index + 1}`}
                             loading="lazy"
                             onError={(e) => {
-                              e.currentTarget.style.display = 'none';
+                              const img = e.currentTarget;
+                              // Try public URL fallback if signed URL fails (400/403/404).
+                              if (!img.dataset.fallbackTried) {
+                                img.dataset.fallbackTried = '1';
+                                try {
+                                  const srcUrl = new URL(img.src);
+                                  const marker = '/storage/v1/object/sign/complaint-images/';
+                                  const markerIndex = srcUrl.pathname.indexOf(marker);
+                                  if (markerIndex !== -1) {
+                                    const encodedPath = srcUrl.pathname.slice(markerIndex + marker.length);
+                                    const objectPath = decodeURIComponent(encodedPath);
+                                    const fallbackUrl = supabase.storage
+                                      .from('complaint-images')
+                                      .getPublicUrl(objectPath).data.publicUrl;
+                                    if (fallbackUrl && fallbackUrl !== img.src) {
+                                      img.src = fallbackUrl;
+                                      return;
+                                    }
+                                  }
+                                } catch (_) {
+                                  // Ignore and continue to final failure state.
+                                }
+                              }
+
+                              img.style.display = 'none';
                               const parent = e.currentTarget.parentElement;
                               if (parent && !parent.querySelector('.image-load-error')) {
                                 const errorLabel = document.createElement('div');
@@ -1690,7 +1729,7 @@ const ComplaintDetail = () => {
                       style={{ minHeight: '320px' }}
                     >
                       {/* Loading overlay */}
-                      {!map.current && (
+                      {!isMapReady && !mapLoadFailed && (
                         <div className="absolute inset-0 bg-gray-50 flex items-center justify-center z-10">
                           <div className="text-center">
                             <MapIcon className="h-12 w-12 text-gray-400 mx-auto mb-2" />
