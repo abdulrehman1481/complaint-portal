@@ -19,7 +19,6 @@ import {
   CheckCircle,
   Loader
 } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
 
 // Fix for default markers in Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -311,9 +310,11 @@ const ReportComplaint = () => {
   };
 
   const uploadImageToStorage = async (file) => {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${uuidv4()}.${fileExt}`;
-    const filePath = `complaints/${fileName}`;
+    const fileExt = (file.name?.split('.').pop() || 'jpg').toLowerCase();
+    const safeExt = fileExt.replace(/[^a-z0-9]/gi, '') || 'jpg';
+    const ownerPath = user?.id ? String(user.id) : 'anonymous';
+    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+    const filePath = `complaints/${ownerPath}/${fileName}`;
     
     const { error: uploadError } = await supabase.storage
       .from('complaint-images')

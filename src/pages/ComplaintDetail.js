@@ -50,6 +50,60 @@ const ComplaintDetail = () => {
   const mapContainer = useRef(null);
   const map = useRef(null);
 
+  const normalizeImagePaths = (images) => {
+    if (Array.isArray(images)) {
+      return images;
+    }
+
+    if (typeof images === 'string') {
+      try {
+        const parsed = JSON.parse(images);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch (e) {
+        // Not a JSON array; continue with empty fallback.
+      }
+    }
+
+    return [];
+  };
+
+  const resolveImageUrl = async (imageRef) => {
+    if (!imageRef || typeof imageRef !== 'string') {
+      return null;
+    }
+
+    const trimmedRef = imageRef.trim();
+    if (!trimmedRef) {
+      return null;
+    }
+
+    // Preserve absolute URLs and data/blob URLs uploaded from other clients.
+    if (
+      trimmedRef.startsWith('http://') ||
+      trimmedRef.startsWith('https://') ||
+      trimmedRef.startsWith('data:') ||
+      trimmedRef.startsWith('blob:')
+    ) {
+      return trimmedRef;
+    }
+
+    try {
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from('complaint-images')
+        .createSignedUrl(trimmedRef, 60 * 60);
+
+      if (!signedError && signedData?.signedUrl) {
+        return signedData.signedUrl;
+      }
+    } catch (e) {
+      // Fall back to public URL generation.
+    }
+
+    return supabase.storage.from('complaint-images').getPublicUrl(trimmedRef).data.publicUrl;
+  };
+
   const fetchComments = async () => {
     try {
       const { data, error } = await supabase
@@ -284,7 +338,9 @@ const ComplaintDetail = () => {
       
       return () => clearTimeout(timer);
     }
-    // Re-initialize map if complaint or container changes
+  }, [complaint]);
+
+  useEffect(() => {
     return () => {
       if (map.current) {
         try {
@@ -295,7 +351,7 @@ const ComplaintDetail = () => {
         map.current = null;
       }
     };
-  }, [complaint, mapContainer.current]);
+  }, []);
 
   // Reinitialize map when status changes to update marker color
   useEffect(() => {
@@ -433,7 +489,7 @@ const ComplaintDetail = () => {
       }
       
       // Validate coordinates
-      if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+      if (lat === null || lat === undefined || lng === null || lng === undefined || isNaN(lat) || isNaN(lng)) {
         console.warn('Invalid or missing coordinates:', { 
           lat, lng, 
           latType: typeof lat, 
@@ -482,6 +538,11 @@ const ComplaintDetail = () => {
         scrollWheelZoom: true,
         doubleClickZoom: true,
         dragging: true
+      });
+
+      map.current.whenReady(() => {
+        // Ensure map tiles and overlays recalculate after route transitions.
+        map.current?.invalidateSize();
       });
       
       // Add multiple tile layer options for better coverage
@@ -669,9 +730,9 @@ const ComplaintDetail = () => {
         availableDepartments = departments || [];
       }
 
-      const imageUrls = (comp.images || []).map(path =>
-        supabase.storage.from('complaint-images').getPublicUrl(path).data.publicUrl
-      );
+      const normalizedImages = normalizeImagePaths(comp.images);
+      const resolvedUrls = await Promise.all(normalizedImages.map(resolveImageUrl));
+      const imageUrls = resolvedUrls.filter(Boolean);
 
       // Parse location data properly
       const parsedLocation = parseComplaintLocation(comp);
@@ -1596,6 +1657,17 @@ const ComplaintDetail = () => {
                           <img
                             src={url}
                             alt={`Evidence ${index + 1}`}
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const parent = e.currentTarget.parentElement;
+                              if (parent && !parent.querySelector('.image-load-error')) {
+                                const errorLabel = document.createElement('div');
+                                errorLabel.className = 'image-load-error text-xs text-red-600 p-2 bg-red-50 rounded';
+                                errorLabel.textContent = 'Image failed to load';
+                                parent.appendChild(errorLabel);
+                              }
+                            }}
                             className="object-cover w-full h-48 rounded-lg hover:opacity-90 transition duration-150"
                           />
                         </a>

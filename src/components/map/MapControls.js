@@ -263,7 +263,7 @@ const MapControls = ({
                         disabled={isProcessing}
                       />
                       <button
-                        onClick={() => handleQuickAction('nearbyAnalysis')}
+                        onClick={() => handleQuickAction('nearbyAnalysis', { radius: customNearbyRadius })}
                         disabled={isProcessing}
                         className="flex-1 px-2 py-1.5 bg-indigo-500 text-white text-xs rounded hover:bg-indigo-600 transition-colors disabled:opacity-50 flex items-center justify-center"
                       >
@@ -284,7 +284,7 @@ const MapControls = ({
                         disabled={isProcessing}
                       />
                       <button
-                        onClick={() => handleQuickAction('bufferAnalysis')}
+                        onClick={() => handleQuickAction('bufferAnalysis', { distance: customBufferDistance })}
                         disabled={isProcessing}
                         className="flex-1 px-2 py-1.5 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors disabled:opacity-50 flex items-center justify-center"
                       >

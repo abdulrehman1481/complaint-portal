@@ -10,6 +10,7 @@ import 'leaflet.heat';
 import * as turf from '@turf/turf';
 import { useNavigate } from 'react-router-dom';
 import { canAccessDrawingTools } from '../../utils/userPermissions';
+import { parseLocation } from '../../utils/locationFormatter';
 import './LeafletMap.css';
 
 // Fix for default markers in Leaflet
@@ -185,29 +186,175 @@ const LeafletMapComponent = forwardRef(({
   const extractCoordinates = useCallback((complaint) => {
     if (complaint.coordinates && Array.isArray(complaint.coordinates) && complaint.coordinates.length === 2) {
       const [lng, lat] = complaint.coordinates;
-      return { lat: parseFloat(lat), lng: parseFloat(lng) };
+      const parsedLat = parseFloat(lat);
+      const parsedLng = parseFloat(lng);
+      if (isFinite(parsedLat) && isFinite(parsedLng) && Math.abs(parsedLat) <= 90 && Math.abs(parsedLng) <= 180) {
+        return { lat: parsedLat, lng: parsedLng };
+      }
     }
     
-    if (complaint.parsedLocation?.latitude && complaint.parsedLocation?.longitude) {
-      return { 
-        lat: parseFloat(complaint.parsedLocation.latitude), 
-        lng: parseFloat(complaint.parsedLocation.longitude) 
-      };
+    if (complaint.parsedLocation?.latitude !== undefined && complaint.parsedLocation?.longitude !== undefined) {
+      const parsedLat = parseFloat(complaint.parsedLocation.latitude);
+      const parsedLng = parseFloat(complaint.parsedLocation.longitude);
+      if (isFinite(parsedLat) && isFinite(parsedLng) && Math.abs(parsedLat) <= 90 && Math.abs(parsedLng) <= 180) {
+        return {
+          lat: parsedLat,
+          lng: parsedLng
+        };
+      }
     }
-    
-    if (complaint.latitude && complaint.longitude) {
-      return { 
-        lat: parseFloat(complaint.latitude), 
-        lng: parseFloat(complaint.longitude) 
-      };
+
+    if (complaint.latitude !== undefined && complaint.longitude !== undefined) {
+      const parsedLat = parseFloat(complaint.latitude);
+      const parsedLng = parseFloat(complaint.longitude);
+      if (isFinite(parsedLat) && isFinite(parsedLng) && Math.abs(parsedLat) <= 90 && Math.abs(parsedLng) <= 180) {
+        return {
+          lat: parsedLat,
+          lng: parsedLng
+        };
+      }
+    }
+
+    if (complaint.location) {
+      const parsedLocation = parseLocation(complaint.location);
+      if (parsedLocation?.latitude !== undefined && parsedLocation?.longitude !== undefined) {
+        const parsedLat = parseFloat(parsedLocation.latitude);
+        const parsedLng = parseFloat(parsedLocation.longitude);
+        if (isFinite(parsedLat) && isFinite(parsedLng) && Math.abs(parsedLat) <= 90 && Math.abs(parsedLng) <= 180) {
+          return { lat: parsedLat, lng: parsedLng };
+        }
+      }
     }
     
     return null;
   }, []);
 
+  const isGeometryLayerForAnalysis = useCallback((layer) => {
+    if (!layer) return false;
+    if (layer.options?.__generatedAnalysis) return false;
+    return layer instanceof L.Circle || layer instanceof L.Polygon || layer instanceof L.Rectangle;
+  }, []);
+
+  const getLatestAnalysisLayer = useCallback(() => {
+    if (!drawnItemsRef.current) return null;
+
+    const layers = [];
+    drawnItemsRef.current.eachLayer((layer) => {
+      layers.push(layer);
+    });
+
+    const eligibleLayers = layers.filter(isGeometryLayerForAnalysis);
+    if (eligibleLayers.length === 0) return null;
+
+    return eligibleLayers[eligibleLayers.length - 1];
+  }, [isGeometryLayerForAnalysis]);
+
+  const getLayerAreaAndType = useCallback((layer) => {
+    if (!layer) {
+      return { area: 0, shapeType: null };
+    }
+
+    if (layer instanceof L.Circle) {
+      const radius = layer.getRadius();
+      return {
+        area: Math.PI * radius * radius,
+        shapeType: 'circle'
+      };
+    }
+
+    if (layer.getLatLngs) {
+      const ring = layer.getLatLngs()?.[0] || [];
+      if (ring.length >= 3) {
+        const coords = ring.map((ll) => [ll.lng, ll.lat]);
+        if (coords.length > 0) {
+          const firstCoord = coords[0];
+          const lastCoord = coords[coords.length - 1];
+          if (!lastCoord || firstCoord[0] !== lastCoord[0] || firstCoord[1] !== lastCoord[1]) {
+            coords.push(firstCoord);
+          }
+        }
+        return {
+          area: turf.area(turf.polygon([coords])),
+          shapeType: layer instanceof L.Rectangle ? 'rectangle' : 'polygon'
+        };
+      }
+    }
+
+    return { area: 0, shapeType: null };
+  }, []);
+
+  const isPointInsideLayer = useCallback((layer, coords) => {
+    if (!layer || !coords) return false;
+
+    if (layer instanceof L.Circle) {
+      const center = layer.getLatLng();
+      const distance = mapInstance.current.distance(
+        [coords.lat, coords.lng],
+        [center.lat, center.lng]
+      );
+      return distance <= layer.getRadius();
+    }
+
+    if (layer.getLatLngs) {
+      const ring = layer.getLatLngs()?.[0] || [];
+      if (ring.length < 3) return false;
+
+      const polygonCoords = ring.map((ll) => [ll.lng, ll.lat]);
+      const firstCoord = polygonCoords[0];
+      const lastCoord = polygonCoords[polygonCoords.length - 1];
+      if (!lastCoord || firstCoord[0] !== lastCoord[0] || firstCoord[1] !== lastCoord[1]) {
+        polygonCoords.push(firstCoord);
+      }
+
+      const polygon = turf.polygon([polygonCoords]);
+      const point = turf.point([coords.lng, coords.lat]);
+      return turf.booleanPointInPolygon(point, polygon);
+    }
+
+    return false;
+  }, []);
+
+  const filterComplaintsByLayer = useCallback((layer, sourceComplaints = complaints) => {
+    const validComplaints = sourceComplaints.filter((complaint) => {
+      const coords = extractCoordinates(complaint);
+      if (!coords) return false;
+      return isFinite(coords.lat) && isFinite(coords.lng);
+    });
+
+    if (!layer) {
+      return validComplaints;
+    }
+
+    return validComplaints.filter((complaint) => {
+      const coords = extractCoordinates(complaint);
+      return isPointInsideLayer(layer, coords);
+    });
+  }, [complaints, extractCoordinates, isPointInsideLayer]);
+
+  const clearGeneratedAnalysisLayers = useCallback(() => {
+    if (!drawnItemsRef.current) return;
+
+    const layersToRemove = [];
+    drawnItemsRef.current.eachLayer((layer) => {
+      if (layer?.options?.__generatedAnalysis) {
+        layersToRemove.push(layer);
+      }
+    });
+
+    layersToRemove.forEach((layer) => {
+      drawnItemsRef.current.removeLayer(layer);
+    });
+  }, []);
+
   // Heat map functionality
   const createHeatMap = useCallback(() => {
     if (!mapInstance.current) return;
+
+    const mapSize = mapInstance.current.getSize?.();
+    if (!mapSize || mapSize.x <= 0 || mapSize.y <= 0) {
+      // Avoid Leaflet.heat canvas redraw errors when container is hidden/unmounted.
+      return;
+    }
     
     const heatMapData = complaints
       .map(complaint => {
@@ -223,7 +370,12 @@ const LeafletMapComponent = forwardRef(({
       })
       .filter(Boolean);
     
-    if (heatMapData.length === 0) return;
+    if (heatMapData.length === 0) {
+      if (heatMapLayer.current && mapInstance.current.hasLayer(heatMapLayer.current)) {
+        mapInstance.current.removeLayer(heatMapLayer.current);
+      }
+      return;
+    }
     
     // Remove existing heat map
     if (heatMapLayer.current) {
@@ -231,19 +383,24 @@ const LeafletMapComponent = forwardRef(({
     }
     
     // Create new heat map
-    heatMapLayer.current = L.heatLayer(heatMapData, {
-      radius: 25,
-      blur: 35,
-      maxZoom: 18,
-      max: 1.0,
-      gradient: {
-        0.4: 'blue',
-        0.6: 'cyan',
-        0.7: 'lime',
-        0.8: 'yellow',
-        1.0: 'red'
-      }
-    });
+    try {
+      heatMapLayer.current = L.heatLayer(heatMapData, {
+        radius: 25,
+        blur: 35,
+        maxZoom: 18,
+        max: 1.0,
+        gradient: {
+          0.4: 'blue',
+          0.6: 'cyan',
+          0.7: 'lime',
+          0.8: 'yellow',
+          1.0: 'red'
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create heat map layer:', error);
+      return;
+    }
     
     // Set z-index to ensure heatmap stays below markers
     if (heatMapLayer.current.getPane) {
@@ -251,23 +408,17 @@ const LeafletMapComponent = forwardRef(({
     }
     
     if (showHeatMap) {
-      heatMapLayer.current.addTo(mapInstance.current);
+      try {
+        heatMapLayer.current.addTo(mapInstance.current);
+      } catch (error) {
+        console.error('Failed to add heat map layer:', error);
+      }
     }
   }, [complaints, extractCoordinates, showHeatMap]);
 
   const toggleHeatMap = useCallback(() => {
-    if (!mapInstance.current) return;
-    
-    if (showHeatMap) {
-      if (heatMapLayer.current) {
-        mapInstance.current.removeLayer(heatMapLayer.current);
-      }
-      setShowHeatMap(false);
-    } else {
-      createHeatMap();
-      setShowHeatMap(true);
-    }
-  }, [showHeatMap, createHeatMap]);
+    setShowHeatMap(prev => !prev);
+  }, []);
 
   // Enhanced analysis popup
   const showAnalysisResultsPopup = useCallback((results, position) => {
@@ -560,83 +711,42 @@ const LeafletMapComponent = forwardRef(({
       let results = {};
       
       if (type === 'count') {
-        const drawnLayers = [];
-        if (drawnItemsRef.current) {
-          drawnItemsRef.current.eachLayer(layer => drawnLayers.push(layer));
-  }
-        if (drawnLayers.length === 0) {
+        const selectedLayer = getLatestAnalysisLayer();
+        if (!selectedLayer) {
           throw new Error('Draw an area on the map to analyze complaints within that region');
         }
-        
-        const analysisResults = [];
-        
-        for (const layer of drawnLayers) {
-          let complaintsInArea = [];
-          let analysisArea = 0;
-          
-          if (layer instanceof L.Circle) {
-            // Handle circle analysis
-            const center = layer.getLatLng();
-            const radius = layer.getRadius();
-            analysisArea = Math.PI * radius * radius; // Area in square meters
-            
-            complaintsInArea = complaints.filter(complaint => {
-              const coords = extractCoordinates(complaint);
-              if (!coords) return false;
-              
-              const distance = mapInstance.current.distance(
-                [coords.lat, coords.lng],
-                [center.lat, center.lng]
-              );
-              return distance <= radius;
-            });
-            
-          } else if (layer.getLatLngs) {
-            // Handle polygon/rectangle analysis using Turf.js
-            const coords = layer.getLatLngs()[0].map(ll => [ll.lng, ll.lat]);
-            coords.push(coords[0]); // Close the polygon
-            const polygon = turf.polygon([coords]);
-            analysisArea = turf.area(polygon); // Area in square meters
-            
-            complaintsInArea = complaints.filter(complaint => {
-              const complaintCoords = extractCoordinates(complaint);
-              if (!complaintCoords) return false;
-              
-              const point = turf.point([complaintCoords.lng, complaintCoords.lat]);
-              return turf.booleanPointInPolygon(point, polygon);
-            });
-          }
-          
-          // Calculate status and category breakdowns
-          const statusCounts = complaintsInArea.reduce((acc, complaint) => {
-            acc[complaint.status] = (acc[complaint.status] || 0) + 1;
-            return acc;
-          }, {});
-          
-          const categoryCounts = complaintsInArea.reduce((acc, complaint) => {
-            const category = complaint.category || complaint.categories?.name || 'Unknown';
-            acc[category] = (acc[category] || 0) + 1;
-            return acc;
-          }, {});
-          
-          // Calculate density (complaints per square kilometer)
-          const densityPerKm2 = analysisArea > 0 ? (complaintsInArea.length / analysisArea) * 1000000 : 0;
-          
-          analysisResults.push({
-            totalComplaints: complaintsInArea.length,
-            statusBreakdown: statusCounts,
-            categoryBreakdown: categoryCounts,
-            complaints: complaintsInArea,
-            shapeType: layer instanceof L.Circle ? 'circle' : 'polygon',
-            area: analysisArea,
-            density: densityPerKm2,
-            userLocationDistance: userLocation ? mapInstance.current.distance(
-              [userLocation.lat, userLocation.lng],
-              layer instanceof L.Circle ? [layer.getLatLng().lat, layer.getLatLng().lng] : 
-              layer.getBounds ? [layer.getBounds().getCenter().lat, layer.getBounds().getCenter().lng] : [0, 0]
-            ) : null
-          });
-        }
+        const { area: analysisArea, shapeType } = getLayerAreaAndType(selectedLayer);
+        const complaintsInArea = filterComplaintsByLayer(selectedLayer);
+
+        const statusCounts = complaintsInArea.reduce((acc, complaint) => {
+          acc[complaint.status] = (acc[complaint.status] || 0) + 1;
+          return acc;
+        }, {});
+
+        const categoryCounts = complaintsInArea.reduce((acc, complaint) => {
+          const category = complaint.category || complaint.categories?.name || 'Unknown';
+          acc[category] = (acc[category] || 0) + 1;
+          return acc;
+        }, {});
+
+        const densityPerKm2 = analysisArea > 0 ? (complaintsInArea.length / analysisArea) * 1000000 : 0;
+
+        const layerCenter = selectedLayer instanceof L.Circle
+          ? selectedLayer.getLatLng()
+          : selectedLayer.getBounds?.().getCenter?.() || null;
+
+        const analysisResults = [{
+          totalComplaints: complaintsInArea.length,
+          statusBreakdown: statusCounts,
+          categoryBreakdown: categoryCounts,
+          complaints: complaintsInArea,
+          shapeType,
+          area: analysisArea,
+          density: densityPerKm2,
+          userLocationDistance: userLocation && layerCenter
+            ? mapInstance.current.distance([userLocation.lat, userLocation.lng], [layerCenter.lat, layerCenter.lng])
+            : null
+        }];
         
         results = {
           type: 'count',
@@ -647,7 +757,8 @@ const LeafletMapComponent = forwardRef(({
         
       } else if (type === 'density') {
         // Enhanced density analysis with user location context
-        const validComplaints = complaints.filter(c => extractCoordinates(c));
+        const selectedLayer = getLatestAnalysisLayer();
+        const validComplaints = filterComplaintsByLayer(selectedLayer);
         const points = validComplaints.map(c => {
           const coords = extractCoordinates(c);
           return turf.point([coords.lng, coords.lat], { 
@@ -666,8 +777,8 @@ const LeafletMapComponent = forwardRef(({
             drawnItemsRef.current.eachLayer(layer => drawnLayers.push(layer));
           }
           
-          if (drawnLayers.length > 0) {
-            const layer = drawnLayers[0];
+          if (selectedLayer) {
+            const layer = selectedLayer;
             if (layer instanceof L.Circle) {
               const center = layer.getLatLng();
               const radius = layer.getRadius();
@@ -721,7 +832,8 @@ const LeafletMapComponent = forwardRef(({
         
       } else if (type === 'hotspot') {
         // Enhanced hotspot analysis with user location integration
-        const validComplaints = complaints.filter(c => extractCoordinates(c));
+        const selectedLayer = getLatestAnalysisLayer();
+        const validComplaints = filterComplaintsByLayer(selectedLayer);
         if (validComplaints.length < 3) {
           throw new Error('Need at least 3 complaints for hotspot analysis');
         }
@@ -738,8 +850,8 @@ const LeafletMapComponent = forwardRef(({
           drawnItemsRef.current.eachLayer(layer => drawnLayers.push(layer));
         }
         
-        if (drawnLayers.length > 0 && drawnLayers[0].getBounds) {
-          bounds = drawnLayers[0].getBounds();
+        if (selectedLayer?.getBounds) {
+          bounds = selectedLayer.getBounds();
         }
         
         // Create adaptive grid based on zoom level and area size
@@ -785,6 +897,8 @@ const LeafletMapComponent = forwardRef(({
           return b.intensity - a.intensity;
         });
         
+        clearGeneratedAnalysisLayers();
+
         // Visualize top hotspots
         hotspots.slice(0, 10).forEach((hotspot, index) => {
           if (hotspot.count >= 2) {
@@ -795,6 +909,7 @@ const LeafletMapComponent = forwardRef(({
               fillOpacity: 0.2 + (hotspot.intensity * 0.4),
               weight: 2
             });
+            circle.options.__generatedAnalysis = true;
             
             const distanceText = hotspot.distanceFromUser ? 
               `<br><small>📍 ${(hotspot.distanceFromUser / 1000).toFixed(1)}km from your location</small>` : '';
@@ -837,6 +952,8 @@ const LeafletMapComponent = forwardRef(({
           throw new Error('No center point available for buffer analysis. Enable location services or draw a shape first.');
         }
         
+        clearGeneratedAnalysisLayers();
+
         // Find complaints within buffer distance
         const complaintsInBuffer = complaints.filter(complaint => {
           const coords = extractCoordinates(complaint);
@@ -858,6 +975,7 @@ const LeafletMapComponent = forwardRef(({
           weight: 3,
           dashArray: '10, 5'
         });
+        bufferCircle.options.__generatedAnalysis = true;
         
         if (drawnItemsRef.current) {
           drawnItemsRef.current.addLayer(bufferCircle);
@@ -913,6 +1031,8 @@ const LeafletMapComponent = forwardRef(({
           return { ...complaint, distance };
         }).sort((a, b) => a.distance - b.distance);
         
+        clearGeneratedAnalysisLayers();
+
         // Create visualization circle
         const searchCircle = L.circle([userLocation.lat, userLocation.lng], {
           radius: searchRadius,
@@ -922,6 +1042,7 @@ const LeafletMapComponent = forwardRef(({
           weight: 2,
           dashArray: '5, 5'
         });
+        searchCircle.options.__generatedAnalysis = true;
         
         if (drawnItemsRef.current) {
           drawnItemsRef.current.addLayer(searchCircle);
@@ -988,7 +1109,19 @@ const LeafletMapComponent = forwardRef(({
     } finally {
       setIsAnalysisInProgress(false);
     }
-  }, [isAdmin, showAnalysisTools, complaints, extractCoordinates, onAnalysisResults, showAnalysisResultsPopup, userLocation]);
+  }, [
+    isAdmin,
+    showAnalysisTools,
+    complaints,
+    extractCoordinates,
+    onAnalysisResults,
+    showAnalysisResultsPopup,
+    userLocation,
+    filterComplaintsByLayer,
+    getLatestAnalysisLayer,
+    getLayerAreaAndType,
+    clearGeneratedAnalysisLayers
+  ]);
 
   // Enhanced drawing mode handlers
   const enableDrawingMode = useCallback((mode) => {
@@ -1097,6 +1230,7 @@ const LeafletMapComponent = forwardRef(({
               fillOpacity: 0.2,
               fillColor: '#8b5cf6'
             });
+            bufferCircle.options.__generatedAnalysis = true;
             
             if (drawnItemsRef.current) {
               drawnItemsRef.current.addLayer(bufferCircle);
@@ -1288,6 +1422,8 @@ const LeafletMapComponent = forwardRef(({
         map.on('draw:created', (e) => {
           console.log('Shape created:', e.layerType);
           const layer = e.layer;
+          layer.options.__generatedAnalysis = false;
+          layer.options.__analysisInput = true;
           
           // Add created layer to the feature group
           drawnItems.addLayer(layer);
@@ -1488,8 +1624,17 @@ const LeafletMapComponent = forwardRef(({
 
   // Update heat map when showHeatMap or complaints change
   useEffect(() => {
-    if (sourcesInitialized && mapInstance.current) {
+    if (!sourcesInitialized || !mapInstance.current) {
+      return;
+    }
+
+    if (showHeatMap) {
       createHeatMap();
+      return;
+    }
+
+    if (heatMapLayer.current && mapInstance.current.hasLayer(heatMapLayer.current)) {
+      mapInstance.current.removeLayer(heatMapLayer.current);
     }
   }, [showHeatMap, complaints, sourcesInitialized, createHeatMap]);
 
@@ -1601,6 +1746,7 @@ const LeafletMapComponent = forwardRef(({
       }
     },
     getDrawnShapes: () => drawnShapes,
+    drawnItemsRef,
     getDrawingMode: () => drawingMode,
     
     // Enhanced analysis methods
@@ -1669,16 +1815,31 @@ const LeafletMapComponent = forwardRef(({
     },
     
     // Legacy methods for backward compatibility
-    createBuffer: (distance) => runSpatialAnalysis('buffer', { distance })
+    createBuffer: (distance) => runSpatialAnalysis('buffer', { distance }),
+    updateComplaintsData: (data) => updateMapData(data)
   }));
 
   // Cleanup
   useEffect(() => {
     return () => {
+      if (heatMapLayer.current && mapInstance.current?.hasLayer(heatMapLayer.current)) {
+        try {
+          mapInstance.current.removeLayer(heatMapLayer.current);
+        } catch (error) {
+          console.warn('Error removing heat map layer during cleanup:', error);
+        }
+      }
+
       if (mapInstance.current) {
-        mapInstance.current.remove();
+        try {
+          mapInstance.current.remove();
+        } catch (error) {
+          console.warn('Error removing map during cleanup:', error);
+        }
         mapInstance.current = null;
       }
+
+      heatMapLayer.current = null;
     };
   }, []);
 
